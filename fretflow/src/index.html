@@ -13,7 +13,17 @@
       box-sizing: border-box;
       -webkit-tap-highlight-color: transparent;
     }
+    html { -webkit-text-size-adjust: 100%; color-scheme: dark; }
+    button, select, input, [role="tab"] { touch-action: manipulation; }
+    button { -webkit-user-select: none; user-select: none; }
+    .app-bottom-pad { padding-bottom: calc(92px + env(safe-area-inset-bottom, 0px)); }
+    .safe-bottom { padding-bottom: max(8px, env(safe-area-inset-bottom, 0px)); }
+    .safe-top { padding-top: max(8px, env(safe-area-inset-top, 0px)); }
+    .no-scrollbar { scrollbar-width: none; }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .note-marker.is-held { animation: none !important; box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.35), 0 0 18px 4px rgba(56, 189, 248, 0.8); }
     body {
+      overscroll-behavior-y: contain;
       font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
       background-color: #0b0f19;
       color: #f1f5f9;
@@ -120,329 +130,253 @@
     }
   </style>
 </head>
-<body class="min-h-screen flex flex-col bg-slate-950 text-slate-100 selection:bg-amber-500 selection:text-slate-950">
+<body class="min-h-screen flex flex-col bg-slate-950 text-slate-100 selection:bg-amber-500 selection:text-slate-950 app-bottom-pad">
 
-  <!-- Top Header & Transport Bar -->
-  <header class="sticky top-0 z-30 bg-slate-900/95 backdrop-blur-md border-b border-slate-800 px-3 sm:px-6 py-2.5">
-    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2.5">
-      <!-- Brand -->
-      <div class="flex items-center gap-2.5">
-        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-400 to-orange-600 flex items-center justify-center shadow-lg shadow-amber-500/20 text-slate-950 font-extrabold text-lg">
-          ♪
-        </div>
-        <div>
-          <div class="flex items-center gap-2">
-            <h1 class="text-base sm:text-lg font-bold tracking-tight text-white">__APP_NAME__</h1>
-            <span id="headerSummaryBadge" class="text-xs font-mono font-semibold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
-              C Ionian (Major) • E-Shape
-            </span>
-          </div>
-          <p class="text-[11px] text-slate-400 hidden sm:block">Interactive Guitar Scale, Mode &amp; Arpeggio Trainer</p>
-        </div>
+  <!-- Top app bar -->
+  <header class="sticky top-0 z-30 bg-[#0b0f19]/95 backdrop-blur-md border-b border-slate-800/70 px-4 sm:px-6 pb-2 safe-top">
+    <div class="max-w-6xl mx-auto flex items-center gap-3">
+      <div class="w-9 h-9 shrink-0 rounded-xl bg-amber-500 flex items-center justify-center text-slate-950">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 3.2v11.3a3.5 3.5 0 1 1-2-3.16V7.1l-7 1.7v7.7a3.5 3.5 0 1 1-2-3.16V5.300a1 1 0 0 1 .76-.97l9-2.2A1 1 0 0 1 19 3.200z"/></svg>
       </div>
-
-      <!-- Primary Playback Controls -->
-      <div class="flex items-center gap-1.5 sm:gap-2 ml-auto sm:ml-0">
-        <button id="btnPlayToggle" type="button" title="Play / Pause (Space)"
-          class="flex items-center gap-2 px-4 py-2 rounded-xl font-semibold text-sm bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-lg shadow-amber-500/20 transition active:scale-95">
-          <span id="playIcon">▶</span>
-          <span id="playLabel">Play</span>
-        </button>
-
-        <button id="btnStop" type="button" title="Stop and Reset" aria-label="Stop and reset"
-          class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-sm transition active:scale-95">
-          ⏹
-        </button>
-
-        <button id="btnStepPrev" type="button" title="Previous Note (←)" aria-label="Previous note"
-          class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-sm transition active:scale-95">
-          ⏮
-        </button>
-
-        <button id="btnStepNext" type="button" title="Next Note (→)" aria-label="Next note"
-          class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-sm transition active:scale-95">
-          ⏭
-        </button>
-
-        <button id="btnLoopToggle" type="button" title="Toggle Loop" aria-pressed="true"
-          class="px-2.5 py-2 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-semibold transition">
-          🔁 Loop
-        </button>
-
-        <button id="btnMetronomeToggle" type="button" title="Toggle Metronome Click" aria-pressed="false"
-          class="px-2.5 py-2 rounded-xl bg-slate-800 text-slate-300 border border-slate-700 text-xs font-semibold transition">
-          ⏱ Click: Off
-        </button>
+      <div class="min-w-0">
+        <h1 class="text-base font-bold tracking-tight text-white leading-tight">__APP_NAME__</h1>
+        <p id="headerSummaryBadge" class="text-xs font-medium text-amber-300 truncate">C Ionian (Major) • E-Shape</p>
       </div>
+      <p class="ml-auto text-xs text-slate-500 hidden md:block">Guitar Scale, Mode &amp; Arpeggio Trainer</p>
     </div>
   </header>
 
-  <!-- Main Workspace -->
-  <main class="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 space-y-4">
+  <main class="flex-1 max-w-6xl w-full mx-auto px-3 sm:px-6 py-3 space-y-3">
 
-    <!-- Control Grid: Key, Mode, Major Scale Shape, Pattern, Tempo -->
-    <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-3">
-
-      <!-- 1. Key & Mode Card (4 cols on lg) -->
-      <div class="lg:col-span-4 bg-slate-900/90 border border-slate-800 rounded-2xl p-3.5 flex flex-col justify-between space-y-3">
-        <div>
-          <div class="flex items-center justify-between mb-2">
-            <span id="lblRootKey" class="text-xs font-bold uppercase tracking-wider text-slate-400">1. Root Key</span>
-            <span id="relativeMajorHint" class="text-[11px] font-mono text-amber-400">Parent Major: C</span>
-          </div>
-          <div id="keyButtonsContainer" role="group" aria-labelledby="lblRootKey" class="grid grid-cols-6 gap-1.5">
-            <!-- Dynamically populated 12 keys -->
-          </div>
-        </div>
-
-        <div class="pt-1 border-t border-slate-800/80">
-          <div class="flex items-center justify-between mb-1.5">
-            <label for="selectMode" class="text-xs font-bold uppercase tracking-wider text-slate-400">2. Scale / Mode</label>
-            <span id="modeFormulaBadge" class="text-[11px] font-mono text-sky-400">1 2 3 4 5 6 7</span>
-          </div>
-          <select id="selectMode"
-            class="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-sm font-medium text-white focus:outline-none focus:border-amber-500">
-            <optgroup label="Modes of the Major Scale">
-              <option value="ionian">Ionian (Major Scale) — Bright, Happy</option>
-              <option value="dorian">Dorian (II Mode) — Soulful, Jazzy Minor</option>
-              <option value="phrygian">Phrygian (III Mode) — Spanish, Exotic Minor</option>
-              <option value="lydian">Lydian (IV Mode) — Dreamy, Floating (#4)</option>
-              <option value="mixolydian">Mixolydian (V Mode) — Bluesy, Rock Dominant (b7)</option>
-              <option value="aeolian">Aeolian (Natural Minor) — Melancholic, Sad</option>
-              <option value="locrian">Locrian (VII Mode) — Dark, Half-Diminished</option>
-            </optgroup>
-            <optgroup label="Pentatonic &amp; Blues">
-              <option value="maj_pent">Major Pentatonic — Country, Sweet Rock</option>
-              <option value="min_pent">Minor Pentatonic — Rock &amp; Blues Essential</option>
-              <option value="blues">Blues Scale — Minor Pentatonic + b5</option>
-            </optgroup>
-          </select>
-        </div>
+    <!-- Now playing -->
+    <section class="bg-slate-900 rounded-2xl px-3 py-2.5 flex items-center gap-3">
+      <div id="liveNoteCircle" class="w-12 h-12 shrink-0 rounded-2xl bg-slate-800 flex flex-col items-center justify-center transition-colors">
+        <span id="liveNoteName" class="text-base font-extrabold text-white leading-none">--</span>
+        <span id="liveNoteDegree" class="text-[10px] font-mono text-amber-400 mt-0.5">Ready</span>
       </div>
-
-      <!-- 2. Major Scale Shape & Pattern Card (5 cols on lg) -->
-      <div class="lg:col-span-5 bg-slate-900/90 border border-slate-800 rounded-2xl p-3.5 flex flex-col justify-between space-y-3">
-        <div>
-          <div class="flex items-center justify-between mb-2">
-            <span id="lblShape" class="text-xs font-bold uppercase tracking-wider text-slate-400">3. Shape (Position)</span>
-            <span id="fretSpanBadge" class="text-[11px] font-mono text-emerald-400">Frets 7–10</span>
-          </div>
-          <div id="shapeButtonsContainer" role="group" aria-labelledby="lblShape" class="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
-            <!-- Populated by JS: C, A, G, E, D shapes + 3NPS / Full -->
-          </div>
-          <div class="mt-2 flex items-center justify-between gap-2">
-            <label for="selectPositionVariant" class="text-xs text-slate-400 shrink-0">More Shapes:</label>
-            <select id="selectPositionVariant"
-              class="w-full bg-slate-950 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs font-medium text-slate-200 focus:outline-none focus:border-amber-500">
-              <optgroup label="CAGED positions (parent major scale)">
-                <option value="C">CAGED: C-Shape</option>
-                <option value="A">CAGED: A-Shape</option>
-                <option value="G">CAGED: G-Shape</option>
-                <option value="E">CAGED: E-Shape</option>
-                <option value="D">CAGED: D-Shape</option>
-              </optgroup>
-              <optgroup id="optgroup3nps" label="3 notes per string (7-note scales)">
-                <option value="3NPS_1">3NPS 1 — starts on the root (1)</option>
-                <option value="3NPS_2">3NPS 2 — starts on the 2nd</option>
-                <option value="3NPS_3">3NPS 3 — starts on the 3rd</option>
-                <option value="3NPS_4">3NPS 4 — starts on the 4th</option>
-                <option value="3NPS_5">3NPS 5 — starts on the 5th</option>
-                <option value="3NPS_6">3NPS 6 — starts on the 6th</option>
-                <option value="3NPS_7">3NPS 7 — starts on the 7th</option>
-              </optgroup>
-              <option value="FULL">Full Fretboard (Frets 0–17)</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="pt-1 border-t border-slate-800/80">
-          <div class="flex items-center justify-between mb-1.5">
-            <label for="selectPattern" class="text-xs font-bold uppercase tracking-wider text-slate-400">4. Practice Pattern</label>
-            <span id="sequenceCountBadge" class="text-[11px] font-mono text-purple-400">16 notes</span>
-          </div>
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mb-2" id="quickPatternButtons">
-            <!-- Quick Pattern Pills -->
-          </div>
-          <select id="selectPattern"
-            class="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs sm:text-sm font-medium text-white focus:outline-none focus:border-amber-500">
-            <option value="asc_desc">Normal: Ascending &amp; Descending (Pendulum)</option>
-            <option value="ascending">Normal: Ascending Only (Low to High)</option>
-            <option value="descending">Normal: Descending Only (High to Low)</option>
-            <option value="arpeggio_7">Arpeggio: Chord Tones (1 - 3 - 5 - 7)</option>
-            <option value="arpeggio_triad">Arpeggio: Triad (1 - 3 - 5)</option>
-            <option value="thirds">Intervals: Broken 3rds, up &amp; down (1-3, 2-4...)</option>
-            <option value="seq_3">Sequence: Groups of 3, up &amp; down (1-2-3, 2-3-4...)</option>
-            <option value="seq_4">Sequence: Groups of 4, up &amp; down (1-2-3-4...)</option>
-            <option value="pedal_root">Pedal Point: Root Anchor + Scale Notes</option>
-          </select>
-        </div>
-      </div>
-
-      <!-- 3. Tempo, Rhythm & Display Card (3 cols on lg) -->
-      <div class="lg:col-span-3 bg-slate-900/90 border border-slate-800 rounded-2xl p-3.5 flex flex-col justify-between space-y-3">
-        <div>
-          <div class="flex items-center justify-between mb-1">
-            <label for="sliderTempo" class="text-xs font-bold uppercase tracking-wider text-slate-400">5. Tempo</label>
-            <div class="flex items-center gap-1">
-              <span id="tempoReadout" class="text-lg font-mono font-extrabold text-amber-400">100</span>
-              <span class="text-xs text-slate-400 font-mono">BPM</span>
-            </div>
-          </div>
-
-          <div class="flex items-center gap-2 my-2">
-            <button id="btnTempoDown" type="button" aria-label="Tempo down 5 BPM"
-              class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 font-bold text-slate-200 flex items-center justify-center active:scale-95">
-              −
-            </button>
-            <input id="sliderTempo" type="range" min="40" max="240" value="100" class="flex-1" />
-            <button id="btnTempoUp" type="button" aria-label="Tempo up 5 BPM"
-              class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 font-bold text-slate-200 flex items-center justify-center active:scale-95">
-              +
-            </button>
-          </div>
-
-          <div class="grid grid-cols-2 gap-1.5 mt-2">
-            <button id="btnTapTempo" type="button"
-              class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-200 transition active:scale-95">
-              👆 Tap Tempo
-            </button>
-            <select id="selectSubdivision" aria-label="Note Subdivision"
-              class="bg-slate-950 border border-slate-700/80 rounded-lg px-2 py-1.5 text-xs font-medium text-slate-200 focus:outline-none focus:border-amber-500">
-              <option value="1">♩ Quarter (1x)</option>
-              <option value="2" selected>♫ Eighth (2x)</option>
-              <option value="3">🎶 Triplet (3x)</option>
-              <option value="4">♬ Sixteenth (4x)</option>
-            </select>
-          </div>
-
-          <div class="flex items-center justify-between gap-2 mt-2">
-            <label for="selectSpeedTrainer" class="text-xs text-slate-400 shrink-0" title="Automatically raises the tempo every time the pattern loops">Speed Trainer:</label>
-            <select id="selectSpeedTrainer"
-              class="w-full bg-slate-950 border border-slate-700/80 rounded-lg px-2 py-1.5 text-xs font-medium text-slate-200 focus:outline-none focus:border-amber-500">
-              <option value="0">Off</option>
-              <option value="2">+2 BPM every loop</option>
-              <option value="5">+5 BPM every loop</option>
-              <option value="10">+10 BPM every loop</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="pt-2 border-t border-slate-800/80 space-y-2">
-          <div class="flex items-center justify-between gap-2">
-            <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Marker Labels</span>
-            <div class="inline-flex rounded-lg bg-slate-950 p-0.5 border border-slate-800" id="labelModeGroup" role="group" aria-label="Marker labels">
-              <button type="button" data-label-mode="note" class="px-2 py-1 rounded-md text-[11px] font-semibold bg-amber-500 text-slate-950">Note</button>
-              <button type="button" data-label-mode="interval" class="px-2 py-1 rounded-md text-[11px] font-semibold text-slate-400 hover:text-white">Degree</button>
-              <button type="button" data-label-mode="finger" class="px-2 py-1 rounded-md text-[11px] font-semibold text-slate-400 hover:text-white">Finger</button>
-            </div>
-          </div>
-
-          <div class="flex items-center justify-between gap-2">
-            <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Layout</span>
-            <div class="inline-flex rounded-lg bg-slate-950 p-0.5 border border-slate-800" id="orientationGroup" role="group" aria-label="Fretboard layout">
-              <button type="button" data-orient="auto" class="px-2 py-1 rounded-md text-[11px] font-semibold bg-amber-500 text-slate-950">Auto</button>
-              <button type="button" data-orient="horizontal" class="px-2 py-1 rounded-md text-[11px] font-semibold text-slate-400 hover:text-white">Horiz</button>
-              <button type="button" data-orient="vertical" class="px-2 py-1 rounded-md text-[11px] font-semibold text-slate-400 hover:text-white">Vert</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Live Now-Playing Strip & Scale Degree Legend -->
-    <section class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 sm:px-5 flex flex-wrap items-center justify-between gap-3">
-      <!-- Current Active Note Monitor -->
-      <div class="flex items-center gap-3">
-        <div id="liveNoteCircle"
-          class="w-12 h-12 rounded-2xl bg-slate-800 border-2 border-slate-700 flex flex-col items-center justify-center transition-all">
-          <span id="liveNoteName" class="text-base font-extrabold text-white leading-none">--</span>
-          <span id="liveNoteDegree" class="text-[10px] font-mono text-amber-400 mt-0.5">Ready</span>
-        </div>
-        <div>
-          <div class="flex items-center gap-2">
-            <span id="liveStringFretText" aria-live="off" class="text-xs sm:text-sm font-semibold text-slate-200">Tap any note or press Play</span>
-            <span id="liveFreqBadge" class="text-[11px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">-- Hz</span>
-          </div>
-          <p id="scaleNotesSummary" class="text-xs font-mono text-slate-400 mt-0.5">
-            Scale Notes: C - D - E - F - G - A - B
-          </p>
-        </div>
-      </div>
-
-      <!-- Color Legend & Context Ghost Toggle -->
-      <div class="flex flex-wrap items-center gap-3 text-xs">
-        <div class="flex items-center gap-1.5">
-          <span class="w-3.5 h-3.5 rounded-full bg-rose-500 inline-block border border-white/60"></span>
-          <span class="text-slate-300 font-medium">Root (1)</span>
-        </div>
-        <div class="flex items-center gap-1.5">
-          <span class="w-3.5 h-3.5 rounded-full bg-amber-500 inline-block border border-white/60"></span>
-          <span class="text-slate-300 font-medium">Chord Tone (3, 5, 7)</span>
-        </div>
-        <div class="flex items-center gap-1.5">
-          <span class="w-3.5 h-3.5 rounded-full bg-emerald-600 inline-block border border-white/60"></span>
-          <span class="text-slate-300 font-medium">Scale Tone (2, 4, 6)</span>
-        </div>
-        <div class="flex items-center gap-1.5">
-          <span class="w-3.5 h-3.5 rounded-full bg-sky-400 inline-block border border-white"></span>
-          <span class="text-slate-300 font-medium">Playing Now</span>
-        </div>
-        <button id="btnGhostNotes" type="button" aria-pressed="true" title="Show the rest of the scale faintly outside the selected shape"
-          class="ml-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[11px] font-medium transition">
-          👻 Ghost Notes: On
-        </button>
-      </div>
-    </section>
-
-    <!-- Fretboard Visualization Container -->
-    <section class="bg-slate-900/95 border border-slate-800 rounded-2xl p-3 sm:p-5 shadow-2xl overflow-hidden">
-      <div class="flex items-center justify-between mb-3">
+      <div class="min-w-0 flex-1">
         <div class="flex items-center gap-2">
-          <h2 class="text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-300">Interactive Guitar Fretboard</h2>
-          <span class="text-[11px] text-slate-400 hidden sm:inline">• Click or tap any marker to hear the guitar pitch</span>
+          <span id="liveStringFretText" class="text-sm font-semibold text-slate-100 truncate">Tap a note or press Play</span>
+          <span id="liveFreqBadge" class="shrink-0 text-[11px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">-- Hz</span>
         </div>
-        <div class="flex flex-wrap items-center justify-end gap-2">
-          <label for="sliderVolume" class="text-[11px] text-slate-400">Vol:</label>
-          <input id="sliderVolume" type="range" min="0" max="100" value="80" class="w-20" />
-          <label for="selectToneType" class="text-[11px] text-slate-400">Tone:</label>
-          <select id="selectToneType"
-            class="bg-slate-950 border border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-amber-500">
-            <option value="acoustic">Steel Acoustic</option>
-            <option value="electric">Warm Clean Electric</option>
-            <option value="bright">Bright Nylon</option>
+        <p id="scaleNotesSummary" class="text-xs font-mono text-slate-400 mt-0.5 truncate">C - D - E - F - G - A - B</p>
+      </div>
+      <button id="btnHoldToggle" type="button" aria-pressed="false" title="Hold: tapped notes keep ringing until you tap them again"
+        class="shrink-0 h-11 px-3.5 rounded-full flex items-center gap-1.5 text-xs font-bold border border-slate-700 text-slate-300 transition">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M2 12c2.5-6 5-6 7.5 0s5 6 7.5 0 3.5-4 5-2"/></svg><span>Hold</span>
+      </button>
+    </section>
+
+    <!-- Fretboard -->
+    <section class="bg-slate-900 rounded-2xl p-3 sm:p-4 overflow-hidden">
+      <div class="flex items-center justify-between mb-2 gap-2">
+        <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400">Fretboard</h2>
+        <span id="fretSpanBadge" class="text-xs font-mono text-emerald-400">Frets 7–10</span>
+      </div>
+      <div id="horizontalFretboardWrapper" class="w-full overflow-x-auto pb-2 select-none">
+        <div id="horizontalFretboard" class="w-full" style="min-width: 780px;"></div>
+      </div>
+      <div id="verticalFretboardWrapper" class="hidden w-full flex justify-center select-none">
+        <div id="verticalFretboard" class="w-full max-w-[420px]"></div>
+      </div>
+      <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400">
+        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-rose-500 inline-block"></span>Root</span>
+        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block"></span>Chord tone</span>
+        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-emerald-600 inline-block"></span>Scale tone</span>
+        <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-sky-400 inline-block"></span>Playing</span>
+      </div>
+    </section>
+
+    <!-- Pattern steps -->
+    <section class="bg-slate-900 rounded-2xl px-3 py-2.5">
+      <div class="flex items-center justify-between mb-1.5 gap-2">
+        <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 truncate"><span id="patternNameLabel" class="text-amber-400">Ascending &amp; Descending</span></h3>
+        <span id="sequenceCountBadge" class="shrink-0 text-xs font-mono text-purple-400">16 notes</span>
+      </div>
+      <div id="sequenceStepsTrack" class="relative flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar"></div>
+    </section>
+
+    <!-- Settings tabs (phones / tablets) -->
+    <nav id="tabBar" role="tablist" aria-label="Settings" class="lg:hidden flex gap-2 overflow-x-auto no-scrollbar -mx-3 px-3 sm:mx-0 sm:px-0">
+      <button type="button" role="tab" data-tab="key">Key</button>
+      <button type="button" role="tab" data-tab="shape">Shape</button>
+      <button type="button" role="tab" data-tab="pattern">Pattern</button>
+      <button type="button" role="tab" data-tab="tempo">Tempo</button>
+      <button type="button" role="tab" data-tab="tuner">Tuner</button>
+      <button type="button" role="tab" data-tab="view">View</button>
+    </nav>
+
+    <section id="panelGrid" class="grid grid-cols-1 lg:grid-cols-3 gap-3">
+
+      <div data-panel="key" class="bg-slate-900 rounded-2xl p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <span id="lblRootKey" class="text-xs font-bold uppercase tracking-wider text-slate-400">Key</span>
+          <span id="relativeMajorHint" class="text-xs font-mono text-amber-400">Parent Major: C</span>
+        </div>
+        <div id="keyButtonsContainer" role="group" aria-labelledby="lblRootKey" class="grid grid-cols-4 sm:grid-cols-6 gap-2"></div>
+        <div class="flex items-center justify-between pt-1">
+          <label for="selectMode" class="text-xs font-bold uppercase tracking-wider text-slate-400">Scale / Mode</label>
+          <span id="modeFormulaBadge" class="text-xs font-mono text-sky-400">1 2 3 4 5 6 7</span>
+        </div>
+        <select id="selectMode" class="w-full h-11 bg-slate-950 border border-slate-700 rounded-xl px-3 text-sm font-medium text-white focus:outline-none focus:border-amber-500">
+          <optgroup label="Modes of the Major Scale">
+            <option value="ionian">Ionian (Major) — bright, happy</option>
+            <option value="dorian">Dorian — soulful, jazzy minor</option>
+            <option value="phrygian">Phrygian — Spanish, exotic minor</option>
+            <option value="lydian">Lydian — dreamy, floating (#4)</option>
+            <option value="mixolydian">Mixolydian — bluesy dominant (b7)</option>
+            <option value="aeolian">Aeolian (Natural Minor) — sad</option>
+            <option value="locrian">Locrian — dark, half-diminished</option>
+          </optgroup>
+          <optgroup label="Pentatonic &amp; Blues">
+            <option value="maj_pent">Major Pentatonic — country, sweet rock</option>
+            <option value="min_pent">Minor Pentatonic — rock &amp; blues</option>
+            <option value="blues">Blues — minor pentatonic + b5</option>
+          </optgroup>
+        </select>
+      </div>
+
+      <div data-panel="shape" class="bg-slate-900 rounded-2xl p-4 space-y-3">
+        <span id="lblShape" class="text-xs font-bold uppercase tracking-wider text-slate-400 block">Shape (position)</span>
+        <div id="shapeButtonsContainer" role="group" aria-labelledby="lblShape" class="grid grid-cols-3 gap-2"></div>
+        <label for="selectPositionVariant" class="text-xs font-bold uppercase tracking-wider text-slate-400 block pt-1">All shapes</label>
+        <select id="selectPositionVariant" class="w-full h-11 bg-slate-950 border border-slate-700 rounded-xl px-3 text-sm font-medium text-white focus:outline-none focus:border-amber-500">
+          <optgroup label="CAGED positions (parent major scale)">
+            <option value="C">CAGED: C-Shape</option>
+            <option value="A">CAGED: A-Shape</option>
+            <option value="G">CAGED: G-Shape</option>
+            <option value="E">CAGED: E-Shape</option>
+            <option value="D">CAGED: D-Shape</option>
+          </optgroup>
+          <optgroup id="optgroup3nps" label="3 notes per string (7-note scales)">
+            <option value="3NPS_1">3NPS 1 — starts on the root</option>
+            <option value="3NPS_2">3NPS 2 — starts on the 2nd</option>
+            <option value="3NPS_3">3NPS 3 — starts on the 3rd</option>
+            <option value="3NPS_4">3NPS 4 — starts on the 4th</option>
+            <option value="3NPS_5">3NPS 5 — starts on the 5th</option>
+            <option value="3NPS_6">3NPS 6 — starts on the 6th</option>
+            <option value="3NPS_7">3NPS 7 — starts on the 7th</option>
+          </optgroup>
+          <option value="FULL">Full fretboard (frets 0–17)</option>
+        </select>
+      </div>
+
+      <div data-panel="pattern" class="bg-slate-900 rounded-2xl p-4 space-y-3">
+        <span class="text-xs font-bold uppercase tracking-wider text-slate-400 block">Practice pattern</span>
+        <div id="quickPatternButtons" class="grid grid-cols-2 gap-2"></div>
+        <label for="selectPattern" class="text-xs font-bold uppercase tracking-wider text-slate-400 block pt-1">All patterns</label>
+        <select id="selectPattern" class="w-full h-11 bg-slate-950 border border-slate-700 rounded-xl px-3 text-sm font-medium text-white focus:outline-none focus:border-amber-500">
+          <option value="asc_desc">Normal: Ascending &amp; Descending</option>
+          <option value="ascending">Normal: Ascending Only</option>
+          <option value="descending">Normal: Descending Only</option>
+          <option value="arpeggio_7">Arpeggio: Chord Tones (1-3-5-7)</option>
+          <option value="arpeggio_triad">Arpeggio: Triad (1-3-5)</option>
+          <option value="thirds">Intervals: Broken 3rds, up &amp; down</option>
+          <option value="seq_3">Sequence: Groups of 3, up &amp; down</option>
+          <option value="seq_4">Sequence: Groups of 4, up &amp; down</option>
+          <option value="pedal_root">Pedal Point: Root + Scale Notes</option>
+        </select>
+      </div>
+
+      <div data-panel="tempo" class="bg-slate-900 rounded-2xl p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <label for="sliderTempo" class="text-xs font-bold uppercase tracking-wider text-slate-400">Tempo</label>
+          <div class="flex items-baseline gap-1">
+            <span id="tempoReadout" class="text-2xl font-mono font-extrabold text-amber-400">100</span>
+            <span class="text-xs text-slate-400 font-mono">BPM</span>
+          </div>
+        </div>
+        <div class="flex items-center gap-3">
+          <button id="btnTempoDown" type="button" aria-label="Tempo down 5 BPM" class="w-11 h-11 shrink-0 rounded-full bg-slate-800 active:bg-slate-700 text-xl font-bold text-slate-100 flex items-center justify-center">−</button>
+          <input id="sliderTempo" type="range" min="40" max="240" value="100" class="flex-1 h-11" />
+          <button id="btnTempoUp" type="button" aria-label="Tempo up 5 BPM" class="w-11 h-11 shrink-0 rounded-full bg-slate-800 active:bg-slate-700 text-xl font-bold text-slate-100 flex items-center justify-center">+</button>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <button id="btnTapTempo" type="button" class="h-11 rounded-xl bg-slate-800 active:bg-slate-700 text-sm font-semibold text-slate-100">Tap tempo</button>
+          <select id="selectSubdivision" aria-label="Notes per beat" class="w-full h-11 bg-slate-950 border border-slate-700 rounded-xl px-3 text-sm font-medium text-white focus:outline-none focus:border-amber-500">
+            <option value="1">Quarter notes</option>
+            <option value="2" selected>Eighth notes</option>
+            <option value="3">Triplets</option>
+            <option value="4">Sixteenths</option>
+          </select>
+        </div>
+        <div class="flex items-center gap-3">
+          <label for="selectSpeedTrainer" class="text-sm text-slate-300 shrink-0">Speed trainer</label>
+          <select id="selectSpeedTrainer" class="w-full h-11 bg-slate-950 border border-slate-700 rounded-xl px-3 text-sm font-medium text-white focus:outline-none focus:border-amber-500">
+            <option value="0">Off</option>
+            <option value="2">+2 BPM every loop</option>
+            <option value="5">+5 BPM every loop</option>
+            <option value="10">+10 BPM every loop</option>
           </select>
         </div>
       </div>
 
-      <!-- Horizontal Fretboard Wrapper (Desktop / Landscape) -->
-      <div id="horizontalFretboardWrapper" class="w-full overflow-x-auto pb-2 select-none">
-        <div id="horizontalFretboard" class="min-w-[760px] w-full" style="min-width: 780px;">
-          <!-- Rendered by JS -->
+      <div data-panel="tuner" class="bg-slate-900 rounded-2xl p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <span id="lblTuner" class="text-xs font-bold uppercase tracking-wider text-slate-400">Tuning reference</span>
+          <span class="text-xs text-slate-500">Standard EADGBE</span>
+        </div>
+        <p class="text-xs text-slate-400">Tap a string to hold its pitch, then tune until the wobble between the two sounds disappears. Tap again to stop.</p>
+        <div id="tunerButtons" role="group" aria-labelledby="lblTuner" class="grid grid-cols-6 gap-2"></div>
+        <label class="flex items-center justify-between gap-3 h-11">
+          <span class="text-sm text-slate-300">Octave up <span class="text-slate-500">(clearer on phone speakers)</span></span>
+          <input id="chkTunerOctave" type="checkbox" class="w-5 h-5 accent-amber-500" />
+        </label>
+        <div class="flex items-center gap-3 pt-1">
+          <label for="sliderVolume" class="text-sm text-slate-300 w-16 shrink-0">Volume</label>
+          <input id="sliderVolume" type="range" min="0" max="100" value="80" class="flex-1 h-11" />
+        </div>
+        <div class="flex items-center gap-3">
+          <label for="selectToneType" class="text-sm text-slate-300 w-16 shrink-0">Tone</label>
+          <select id="selectToneType" class="w-full h-11 bg-slate-950 border border-slate-700 rounded-xl px-3 text-sm font-medium text-white focus:outline-none focus:border-amber-500">
+            <option value="acoustic">Steel acoustic</option>
+            <option value="electric">Warm clean electric</option>
+            <option value="bright">Bright nylon</option>
+          </select>
         </div>
       </div>
 
-      <!-- Vertical Fretboard Wrapper (Phone / Portrait) -->
-      <div id="verticalFretboardWrapper" class="hidden w-full flex justify-center select-none">
-        <div id="verticalFretboard" class="w-full max-w-[380px]">
-          <!-- Rendered by JS -->
+      <div data-panel="view" class="bg-slate-900 rounded-2xl p-4 space-y-3">
+        <span class="text-xs font-bold uppercase tracking-wider text-slate-400 block">Display</span>
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-sm text-slate-300">Marker labels</span>
+          <div class="inline-flex rounded-full bg-slate-950 p-1" id="labelModeGroup" role="group" aria-label="Marker labels">
+            <button type="button" data-label-mode="note">Note</button>
+            <button type="button" data-label-mode="interval">Degree</button>
+            <button type="button" data-label-mode="finger">Finger</button>
+          </div>
         </div>
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-sm text-slate-300">Neck layout</span>
+          <div class="inline-flex rounded-full bg-slate-950 p-1" id="orientationGroup" role="group" aria-label="Neck layout">
+            <button type="button" data-orient="auto">Auto</button>
+            <button type="button" data-orient="horizontal">Wide</button>
+            <button type="button" data-orient="vertical">Tall</button>
+          </div>
+        </div>
+        <label class="flex items-center justify-between gap-3 h-11">
+          <span class="text-sm text-slate-300">Show the rest of the scale faintly</span>
+          <input id="btnGhostNotes" type="checkbox" checked class="w-5 h-5 accent-amber-500" />
+        </label>
+        <p class="text-xs text-slate-500 hidden lg:block">Keyboard: Space = play/pause • ← → = step • ↑ ↓ = tempo</p>
       </div>
     </section>
-
-    <!-- Sequence Step Visualizer Bar -->
-    <section class="bg-slate-900/90 border border-slate-800 rounded-2xl p-3.5">
-      <div class="flex items-center justify-between mb-2">
-        <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400">
-          Pattern Steps (<span id="patternNameLabel" class="text-amber-400">Ascending &amp; Descending</span>)
-        </h3>
-        <span class="text-[11px] text-slate-400 hidden sm:inline">Click a step to jump • Space = play/pause • ← → = step • ↑ ↓ = tempo</span>
-      </div>
-      <div id="sequenceStepsTrack" class="flex items-center gap-1.5 overflow-x-auto pb-1.5">
-        <!-- Populated by JS -->
-      </div>
-    </section>
-
   </main>
+
+  <!-- Bottom transport bar -->
+  <footer class="fixed bottom-0 inset-x-0 z-40 bg-[#0b0f19]/95 backdrop-blur-md border-t border-slate-800/70 px-3 pt-2 safe-bottom">
+    <div class="max-w-md mx-auto flex items-center justify-between">
+      <button id="btnLoopToggle" type="button" title="Loop" aria-label="Loop" aria-pressed="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/></svg></button>
+      <button id="btnStepPrev" type="button" title="Previous note (←)" aria-label="Previous note" class="w-11 h-11 rounded-full flex items-center justify-center text-slate-200 hover:bg-slate-800 active:bg-slate-700 transition"><svg  width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 5a1 1 0 0 1 1 1v12a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1zm13.5.9v12.2a.9.9 0 0 1-1.4.75L9.3 12.75a.9.9 0 0 1 0-1.5l8.8-6.1a.9.9 0 0 1 1.4.75z"/></svg></button>
+      <button id="btnPlayToggle" type="button" title="Play / Pause (Space)" aria-label="Play"
+        class="w-16 h-16 rounded-full flex items-center justify-center bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/25 active:scale-95 transition">
+        <svg id="iconPlay" width="28" height="28" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.14v13.72a1 1 0 0 0 1.52.85l11-6.86a1 1 0 0 0 0-1.7l-11-6.86A1 1 0 0 0 8 5.14z"/></svg><svg id="iconPause" class="hidden" width="28" height="28" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4.5" height="14" rx="1.2"/><rect x="13.5" y="5" width="4.5" height="14" rx="1.2"/></svg>
+      </button>
+      <button id="btnStepNext" type="button" title="Next note (→)" aria-label="Next note" class="w-11 h-11 rounded-full flex items-center justify-center text-slate-200 hover:bg-slate-800 active:bg-slate-700 transition"><svg  width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18 5a1 1 0 0 1 1 1v12a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1zM4.5 5.9v12.2a.9.9 0 0 0 1.4.75l8.8-6.1a.9.9 0 0 0 0-1.5L5.9 5.15a.9.9 0 0 0-1.4.75z"/></svg></button>
+      <button id="btnStop" type="button" title="Stop and reset" aria-label="Stop and reset" class="w-11 h-11 rounded-full flex items-center justify-center text-slate-200 hover:bg-slate-800 active:bg-slate-700 transition"><svg  width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
+      <button id="btnMetronomeToggle" type="button" title="Metronome click" aria-label="Metronome click" aria-pressed="false"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 3h7l3.5 18H5L8.5 3z"/><path d="M12 15l5-9"/><path d="M6.5 15h11"/></svg></button>
+    </div>
+  </footer>
 
   <!--APP_JS-->
 </body>

@@ -5,6 +5,7 @@
     const LETTERS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
     const LETTER_PC = [0, 2, 4, 5, 7, 9, 11];
     const SETTINGS_KEY = 'fretTrainer.settings.v2';
+    const TAB_IDS = ['key', 'shape', 'pattern', 'tempo', 'tuner', 'view'];
 
     const KEY_DISPLAY = [
       { id: 0, label: 'C' },
@@ -95,7 +96,12 @@
       volume: 0.8,
       loop: true,
       metronome: false,
+      holdMode: false,      // tapped notes sustain until tapped again
+      tunerOctave: false,   // tuning reference one octave up
+      activeTab: 'key',     // settings tab shown on phones
       // --- runtime only (not saved) ---
+      heldId: null,         // fretboard cell id or 'tuner-<string>' currently sustaining
+      heldInfo: null,
       isPlaying: false,
       currentStepIndex: -1,
       activeNoteObj: null,
@@ -103,7 +109,8 @@
       tapTimestamps: []
     };
     const PERSISTED_KEYS = ['keyRoot', 'scale', 'shape', 'pattern', 'tempo', 'subdivision', 'speedTrainer',
-      'labelMode', 'orientation', 'showGhostNotes', 'toneType', 'volume', 'loop', 'metronome'];
+      'labelMode', 'orientation', 'showGhostNotes', 'toneType', 'volume', 'loop', 'metronome',
+      'holdMode', 'tunerOctave', 'activeTab'];
 
     function saveSettings() {
       try {
@@ -133,6 +140,9 @@
         if (typeof saved.volume === 'number') state.volume = Math.max(0, Math.min(1, saved.volume));
         if (typeof saved.loop === 'boolean') state.loop = saved.loop;
         if (typeof saved.metronome === 'boolean') state.metronome = saved.metronome;
+        if (typeof saved.holdMode === 'boolean') state.holdMode = saved.holdMode;
+        if (typeof saved.tunerOctave === 'boolean') state.tunerOctave = saved.tunerOctave;
+        if (TAB_IDS.includes(saved.activeTab)) state.activeTab = saved.activeTab;
       } catch (err) { /* ignore corrupt or unavailable storage */ }
     }
 
@@ -180,25 +190,88 @@
       bright:   { smooth: 0, t60: 2.0, lowpass: 9000, pick: 0.12 }
     };
 
+    const TONE_BODY = {
+      acoustic: { freq: 190, gain: 3.5 },
+      electric: { freq: 420, gain: 2.5 },
+      bright:   { freq: 260, gain: 2.5 }
+    };
+
     let audioCtx = null;
     let masterGain = null;
+    let noteBus = null;
+    let bodyEq = null;
     const pluckCache = new Map();
+    const stringVoices = {}; // last sounding note per string, so a new note on that string cuts it off
+
+    // Small synthetic room so notes don't sound bone-dry
+    function makeRoomImpulse(ctx) {
+      const len = Math.floor(ctx.sampleRate * 1.1);
+      const impulse = ctx.createBuffer(2, len, ctx.sampleRate);
+      let seed = 987654321;
+      for (let ch = 0; ch < 2; ch++) {
+        const d = impulse.getChannelData(ch);
+        let lp = 0;
+        let energy = 0;
+        for (let i = 0; i < len; i++) {
+          seed = (seed * 1664525 + 1013904223) >>> 0;
+          const white = seed / 2147483648 - 1;
+          lp += 0.35 * (white - lp); // darken the tail
+          const t = i / len;
+          d[i] = lp * Math.pow(1 - t, 2) * Math.exp(-4.5 * t);
+          energy += d[i] * d[i];
+        }
+        const norm = 1 / Math.sqrt(energy);
+        for (let i = 0; i < len; i++) d[i] *= norm;
+      }
+      return impulse;
+    }
+
+    function applyToneToGraph() {
+      if (!bodyEq) return;
+      const body = TONE_BODY[state.toneType] || TONE_BODY.acoustic;
+      bodyEq.frequency.value = body.freq;
+      bodyEq.gain.value = body.gain;
+    }
+
+    // notes -> noteBus -> body EQ -> rumble filter -> (dry + room) -> volume -> limiter -> out
+    function setupAudioGraph(ctx) {
+      noteBus = ctx.createGain();
+      bodyEq = ctx.createBiquadFilter();
+      bodyEq.type = 'peaking';
+      bodyEq.Q.value = 0.9;
+      const rumble = ctx.createBiquadFilter();
+      rumble.type = 'highpass';
+      rumble.frequency.value = 55;
+      const room = ctx.createConvolver();
+      room.buffer = makeRoomImpulse(ctx);
+      const roomLevel = ctx.createGain();
+      roomLevel.gain.value = 0.16;
+      masterGain = ctx.createGain();
+      masterGain.gain.value = state.volume;
+      const limiter = ctx.createDynamicsCompressor();
+      limiter.threshold.value = -9;
+      limiter.knee.value = 6;
+      limiter.ratio.value = 12;
+      limiter.attack.value = 0.002;
+      limiter.release.value = 0.15;
+
+      noteBus.connect(bodyEq);
+      bodyEq.connect(rumble);
+      rumble.connect(masterGain);
+      rumble.connect(room);
+      room.connect(roomLevel);
+      roomLevel.connect(masterGain);
+      masterGain.connect(limiter);
+      limiter.connect(ctx.destination);
+      applyToneToGraph();
+    }
 
     function ensureAudioContext() {
       if (!audioCtx) {
         const AudioContextClass = window.AudioContext || window.webkitAudioContext;
         if (!AudioContextClass) return null;
         audioCtx = new AudioContextClass();
-        masterGain = audioCtx.createGain();
-        masterGain.gain.value = state.volume;
-        const limiter = audioCtx.createDynamicsCompressor();
-        limiter.threshold.value = -14;
-        limiter.knee.value = 10;
-        limiter.ratio.value = 4;
-        limiter.attack.value = 0.003;
-        limiter.release.value = 0.2;
-        masterGain.connect(limiter);
-        limiter.connect(audioCtx.destination);
+        setupAudioGraph(audioCtx);
       }
       if (audioCtx.state === 'suspended') {
         audioCtx.resume();
@@ -299,7 +372,8 @@
     }
 
     // when: AudioContext time to start (omit for "now"). Returns the source node.
-    function playGuitarNote(midi, durationSec, isRoot, when) {
+    // stringNumber: the note cuts off whatever was ringing on that string, like a real guitar.
+    function playGuitarNote(midi, durationSec, isRoot, when, stringNumber) {
       const ctx = ensureAudioContext();
       if (!ctx) return null;
       const startAt = Math.max(when || 0, ctx.currentTime);
@@ -313,19 +387,73 @@
       const filter = ctx.createBiquadFilter();
       filter.type = 'lowpass';
       filter.frequency.value = tone.lowpass;
-      filter.Q.value = 0.6;
+      filter.Q.value = 0.5;
 
       const gain = ctx.createGain();
       const releaseAt = startAt + Math.max(durationSec || 0.45, 0.3);
-      gain.gain.setValueAtTime(isRoot ? 0.5 : 0.4, startAt);
-      gain.gain.setTargetAtTime(0, releaseAt, 0.09);
+      gain.gain.setValueAtTime(0, startAt);
+      gain.gain.linearRampToValueAtTime(isRoot ? 0.46 : 0.38, startAt + 0.002);
+      gain.gain.setTargetAtTime(0, releaseAt, 0.1);
+
+      if (stringNumber) {
+        const prev = stringVoices[stringNumber];
+        if (prev && prev.endsAt > startAt) {
+          prev.gain.gain.cancelScheduledValues(startAt);
+          prev.gain.gain.setTargetAtTime(0, startAt, 0.012);
+        }
+        stringVoices[stringNumber] = { gain, endsAt: releaseAt + 0.7 };
+      }
 
       src.connect(filter);
       filter.connect(gain);
-      gain.connect(masterGain);
+      gain.connect(noteBus);
       src.start(startAt);
-      src.stop(releaseAt + 0.6);
+      src.stop(releaseAt + 0.7);
       return src;
+    }
+
+    /* ---- Sustained "hold" tone (tuning reference / drone) ---- */
+    let drone = null;
+    let droneWave = null;
+
+    function startDrone(midi) {
+      const ctx = ensureAudioContext();
+      stopDrone();
+      if (!ctx) return;
+      if (!droneWave || droneWave.ctx !== ctx) {
+        // Rich but smooth harmonic series: clear on small speakers, steady enough to hear beating
+        const count = 24;
+        const real = new Float32Array(count + 1);
+        const imag = new Float32Array(count + 1);
+        for (let n = 1; n <= count; n++) imag[n] = 1 / Math.pow(n, 1.25);
+        droneWave = { ctx, wave: ctx.createPeriodicWave(real, imag) };
+      }
+      const now = ctx.currentTime;
+      const freq = midiToFreq(midi);
+      const osc = ctx.createOscillator();
+      osc.setPeriodicWave(droneWave.wave);
+      osc.frequency.value = freq;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = Math.max(1800, Math.min(6000, freq * 14));
+      filter.Q.value = 0.5;
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(0.11, now + 0.06);
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(noteBus);
+      osc.start(now);
+      drone = { osc, gain, midi };
+    }
+
+    function stopDrone() {
+      if (!drone || !audioCtx) { drone = null; return; }
+      const now = audioCtx.currentTime;
+      drone.gain.gain.cancelScheduledValues(now);
+      drone.gain.gain.setTargetAtTime(0, now, 0.04);
+      try { drone.osc.stop(now + 0.35); } catch (err) { /* already stopped */ }
+      drone = null;
     }
 
     function playMetronomeClick(isAccent, when) {
@@ -337,10 +465,10 @@
       osc.type = 'sine';
       osc.frequency.setValueAtTime(isAccent ? 1500 : 1000, t);
       gain.gain.setValueAtTime(0.0001, t);
-      gain.gain.linearRampToValueAtTime(isAccent ? 0.3 : 0.18, t + 0.002);
+      gain.gain.linearRampToValueAtTime(isAccent ? 0.26 : 0.15, t + 0.002);
       gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
       osc.connect(gain);
-      gain.connect(masterGain);
+      gain.connect(masterGain); // straight to the output: the click stays dry and crisp
       osc.start(t);
       osc.stop(t + 0.06);
     }
@@ -543,25 +671,40 @@
      ********************************************************************/
     const BTN_STYLES = {
       key: {
-        base: 'py-1.5 px-1 rounded-lg text-xs font-bold transition border ',
-        on: 'bg-amber-500 text-slate-950 border-amber-400 shadow-md shadow-amber-500/20',
-        off: 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700 hover:text-white'
+        base: 'h-11 rounded-xl text-sm font-bold transition ',
+        on: 'bg-amber-500 text-slate-950',
+        off: 'bg-slate-800 text-slate-200 active:bg-slate-700'
       },
       shape: {
-        base: 'py-1.5 px-2 rounded-lg text-xs font-bold transition border ',
-        on: 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-md shadow-emerald-500/20',
-        off: 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700 hover:text-white'
+        base: 'h-11 rounded-xl text-sm font-bold transition ',
+        on: 'bg-emerald-500 text-slate-950',
+        off: 'bg-slate-800 text-slate-200 active:bg-slate-700'
       },
       pattern: {
-        base: 'py-1 px-2 rounded-lg text-[11px] font-semibold transition border truncate ',
-        on: 'bg-purple-500 text-slate-950 border-purple-400 font-bold',
-        off: 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-700'
+        base: 'h-11 px-2 rounded-xl text-xs font-semibold transition truncate ',
+        on: 'bg-purple-500 text-slate-950',
+        off: 'bg-slate-800 text-slate-200 active:bg-slate-700'
       },
       segment: {
-        base: 'px-2 py-1 rounded-md text-[11px] font-semibold ',
+        base: 'h-9 px-3.5 rounded-full text-xs font-semibold transition ',
         on: 'bg-amber-500 text-slate-950',
-        off: 'text-slate-400 hover:text-white'
+        off: 'text-slate-400'
+      },
+      tab: {
+        base: 'shrink-0 h-10 px-4 rounded-full text-sm font-semibold transition ',
+        on: 'bg-amber-500 text-slate-950',
+        off: 'bg-slate-900 text-slate-300 active:bg-slate-800'
+      },
+      tuner: {
+        base: 'h-14 rounded-xl flex flex-col items-center justify-center transition ',
+        on: 'bg-sky-400 text-slate-950',
+        off: 'bg-slate-800 text-slate-100 active:bg-slate-700'
       }
+    };
+    const ICON_TOGGLE = {
+      base: 'w-11 h-11 rounded-full flex items-center justify-center transition ',
+      on: 'bg-amber-500/20 text-amber-300',
+      off: 'text-slate-500 hover:bg-slate-800'
     };
 
     // Highlights the button whose data attribute matches `value` (buttons are never re-created,
@@ -581,6 +724,12 @@
         `<button type="button" data-shape-id="${sh.id}">${sh.label}</button>`).join('');
       document.getElementById('quickPatternButtons').innerHTML = QUICK_PATTERNS.map(p =>
         `<button type="button" data-pat-id="${p.id}">${p.label}</button>`).join('');
+      // Tuning reference: low E on the left, like looking down at the neck
+      document.getElementById('tunerButtons').innerHTML = [...STRING_TUNING].reverse().map(s =>
+        `<button type="button" data-tuner-string="${s.stringNumber}" aria-label="Hold string ${s.stringNumber}, ${s.name.toUpperCase()}">
+           <span class="text-lg font-extrabold leading-none">${s.name.toUpperCase()}</span>
+           <span class="text-[10px] font-mono opacity-70 mt-1">${s.stringNumber}</span>
+         </button>`).join('');
     }
 
     function paintControls() {
@@ -596,21 +745,36 @@
       document.getElementById('optgroup3nps').disabled = !isSevenNoteScale(state.scale);
 
       const loopBtn = document.getElementById('btnLoopToggle');
-      loopBtn.className = state.loop
-        ? 'px-2.5 py-2 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-semibold transition'
-        : 'px-2.5 py-2 rounded-xl bg-slate-800 text-slate-400 border border-slate-700 text-xs font-semibold transition';
+      loopBtn.className = ICON_TOGGLE.base + (state.loop ? ICON_TOGGLE.on : ICON_TOGGLE.off);
       loopBtn.setAttribute('aria-pressed', String(state.loop));
 
       const clickBtn = document.getElementById('btnMetronomeToggle');
-      clickBtn.textContent = state.metronome ? '⏱ Click: On' : '⏱ Click: Off';
-      clickBtn.className = state.metronome
-        ? 'px-2.5 py-2 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-semibold transition'
-        : 'px-2.5 py-2 rounded-xl bg-slate-800 text-slate-300 border border-slate-700 text-xs font-semibold transition';
+      clickBtn.className = ICON_TOGGLE.base + (state.metronome ? ICON_TOGGLE.on : ICON_TOGGLE.off);
       clickBtn.setAttribute('aria-pressed', String(state.metronome));
 
-      const ghostBtn = document.getElementById('btnGhostNotes');
-      ghostBtn.textContent = state.showGhostNotes ? '👻 Ghost Notes: On' : '👻 Ghost Notes: Off';
-      ghostBtn.setAttribute('aria-pressed', String(state.showGhostNotes));
+      const holdBtn = document.getElementById('btnHoldToggle');
+      holdBtn.className = 'shrink-0 h-11 px-3.5 rounded-full flex items-center gap-1.5 text-xs font-bold border transition '
+        + (state.holdMode ? 'bg-sky-400 text-slate-950 border-sky-300' : 'border-slate-700 text-slate-300');
+      holdBtn.setAttribute('aria-pressed', String(state.holdMode));
+
+      document.getElementById('btnGhostNotes').checked = state.showGhostNotes;
+      document.getElementById('chkTunerOctave').checked = state.tunerOctave;
+
+      // Settings tabs (only one panel is visible at a time below the lg breakpoint)
+      paintButtonGroup('tabBar', 'data-tab', state.activeTab, BTN_STYLES.tab);
+      document.querySelectorAll('#tabBar [data-tab]').forEach(btn => {
+        btn.setAttribute('aria-selected', btn.getAttribute('data-tab') === state.activeTab ? 'true' : 'false');
+        btn.removeAttribute('aria-pressed');
+      });
+      document.querySelectorAll('#panelGrid [data-panel]').forEach(panel => {
+        panel.classList.toggle('max-lg:hidden', panel.getAttribute('data-panel') !== state.activeTab);
+      });
+      paintTunerButtons();
+    }
+
+    function paintTunerButtons() {
+      const heldString = state.heldId && state.heldId.startsWith('tuner-') ? state.heldId.slice(6) : '';
+      paintButtonGroup('tunerButtons', 'data-tuner-string', heldString, BTN_STYLES.tuner);
     }
 
     function getMarkerText(noteInfo) {
@@ -775,10 +939,14 @@
 
     // Moves the "playing now" highlight without rebuilding the fretboard
     function paintActiveNote() {
-      document.querySelectorAll('.note-marker.is-playing').forEach(el => el.classList.remove('is-playing'));
+      document.querySelectorAll('.note-marker.is-playing').forEach(el => el.classList.remove('is-playing', 'is-held'));
       const note = state.activeNoteObj;
       if (!note) return;
-      document.querySelectorAll(`[data-note-cell="${note.id}"]`).forEach(el => el.classList.add('is-playing'));
+      const held = state.heldId === note.id;
+      document.querySelectorAll(`[data-note-cell="${note.id}"]`).forEach(el => {
+        el.classList.add('is-playing');
+        el.classList.toggle('is-held', held);
+      });
     }
 
     const vibrateTimers = {};
@@ -834,27 +1002,42 @@
       const degEl = document.getElementById('liveNoteDegree');
       const posEl = document.getElementById('liveStringFretText');
       const freqEl = document.getElementById('liveFreqBadge');
+      const circleBase = 'w-12 h-12 shrink-0 rounded-2xl flex flex-col items-center justify-center transition-colors ';
+      const lit = () => {
+        nameEl.className = 'text-base font-extrabold leading-none text-slate-950';
+        degEl.className = 'text-[10px] font-mono text-slate-950 font-bold mt-0.5';
+      };
+
+      // Tuning reference tone
+      if (state.heldId && state.heldId.startsWith('tuner-') && state.heldInfo) {
+        const h = state.heldInfo;
+        nameEl.textContent = h.name;
+        degEl.textContent = 'Tune';
+        posEl.textContent = `Holding string ${h.stringNumber} • open${state.tunerOctave ? ' (+1 octave)' : ''}`;
+        freqEl.textContent = `${midiToFreq(h.midi).toFixed(1)} Hz`;
+        circle.className = circleBase + 'bg-sky-400';
+        lit();
+        return;
+      }
 
       if (!state.activeNoteObj) {
         nameEl.textContent = cachedScaleData ? cachedScaleData.degreeNames[0] : '--';
+        nameEl.className = 'text-base font-extrabold text-white leading-none';
         degEl.textContent = 'Root';
         degEl.className = 'text-[10px] font-mono text-amber-400 mt-0.5';
-        posEl.textContent = 'Tap any note marker or press Play';
+        posEl.textContent = state.holdMode ? 'Tap a note to hold it' : 'Tap a note or press Play';
         freqEl.textContent = 'Ready';
-        circle.className = 'w-12 h-12 rounded-2xl bg-slate-800 border-2 border-slate-700 flex flex-col items-center justify-center transition-all';
+        circle.className = circleBase + 'bg-slate-800';
         return;
       }
 
       const n = state.activeNoteObj;
       nameEl.textContent = n.noteName;
-      degEl.textContent = `Deg ${n.degreeLabel}`;
-      degEl.className = 'text-[10px] font-mono text-slate-950 font-bold mt-0.5';
-      posEl.textContent = `String ${n.stringNumber} (${STRING_TUNING[n.stringNumber - 1].name}) • Fret ${n.fret}`;
+      degEl.textContent = n.degreeLabel;
+      posEl.textContent = `${state.heldId === n.id ? 'Holding • ' : ''}String ${n.stringNumber} • Fret ${n.fret === 0 ? 'open' : n.fret}`;
       freqEl.textContent = `${midiToFreq(n.midi).toFixed(1)} Hz`;
-      circle.className = n.isRoot
-        ? 'w-12 h-12 rounded-2xl bg-rose-500 border-2 border-white flex flex-col items-center justify-center shadow-lg shadow-rose-500/30 text-slate-950 transition-all'
-        : 'w-12 h-12 rounded-2xl bg-sky-500 border-2 border-white flex flex-col items-center justify-center shadow-lg shadow-sky-400/30 text-slate-950 transition-all';
-      nameEl.className = 'text-base font-extrabold leading-none text-slate-950';
+      circle.className = circleBase + (n.isRoot ? 'bg-rose-500' : 'bg-sky-400');
+      lit();
     }
 
     function isVerticalLayout() {
@@ -913,7 +1096,7 @@
       const patternSelect = document.getElementById('selectPattern');
       const selectedPatternText = (patternSelect.options[patternSelect.selectedIndex] || {}).text || 'Pattern';
       document.getElementById('patternNameLabel').textContent = selectedPatternText.replace(/^[^:]+:\s*/, '');
-      document.getElementById('scaleNotesSummary').textContent = `Scale Notes: ${degreeNames.join(' - ')}`;
+      document.getElementById('scaleNotesSummary').textContent = degreeNames.join(' - ');
 
       updateResponsiveOrientation();
       renderFretboardsOnly();
@@ -959,13 +1142,53 @@
       highlightSequenceTrackStep();
     }
 
+    /* ---- Hold: keep a note ringing (for tuning or ear training) ---- */
+    function releaseHold() {
+      if (!state.heldId && !drone) return;
+      stopDrone();
+      state.heldId = null;
+      state.heldInfo = null;
+      paintActiveNote();
+      paintTunerButtons();
+      updateLiveNoteBanner();
+    }
+
+    // Pluck the note, then keep it sounding until released
+    function holdPitch(id, midi, stringNumber, info) {
+      playGuitarNote(midi, 1.2, false, 0, stringNumber);
+      startDrone(midi);
+      state.heldId = id;
+      state.heldInfo = info || null;
+    }
+
+    function toggleTunerString(stringNumber) {
+      const id = 'tuner-' + stringNumber;
+      if (state.isPlaying) pausePlayback();
+      if (state.heldId === id) { releaseHold(); return; }
+      const strInfo = STRING_TUNING[stringNumber - 1];
+      const midi = strInfo.midi + (state.tunerOctave ? 12 : 0);
+      state.activeNoteObj = null;
+      state.currentStepIndex = -1;
+      holdPitch(id, midi, stringNumber, { stringNumber, midi, name: strInfo.name.toUpperCase() });
+      paintActiveNote();
+      highlightSequenceTrackStep();
+      paintTunerButtons();
+      updateLiveNoteBanner();
+      vibrateString(stringNumber);
+    }
+
     // Plays one step immediately (manual stepping / clicking a step)
     function triggerSequenceStep(index) {
       if (!state.sequence.length) return;
       const len = state.sequence.length;
       const idx = ((index % len) + len) % len;
       const noteObj = state.sequence[idx];
-      playGuitarNote(noteObj.midi, 0.6, noteObj.isRoot);
+      if (state.holdMode) {
+        holdPitch(noteObj.id, noteObj.midi, noteObj.stringNumber);
+        paintTunerButtons();
+      } else {
+        playGuitarNote(noteObj.midi, 1.3, noteObj.isRoot, 0, noteObj.stringNumber);
+      }
       showStep(idx, noteObj);
     }
 
@@ -1013,7 +1236,7 @@
         const when = nextNoteTime;
         const stepSec = getStepIntervalSec();
 
-        const src = playGuitarNote(noteObj.midi, Math.max(0.3, stepSec * 1.1), noteObj.isRoot, when);
+        const src = playGuitarNote(noteObj.midi, Math.max(0.9, stepSec * 2.5), noteObj.isRoot, when, noteObj.stringNumber);
         if (src) pendingSources.push({ src, when });
         if (state.metronome && beatStepCounter % state.subdivision === 0) {
           playMetronomeClick((beatStepCounter / state.subdivision) % 4 === 0, when);
@@ -1035,6 +1258,7 @@
 
     function startPlayback() {
       if (!state.sequence.length || state.isPlaying) return;
+      releaseHold();
       const ctx = ensureAudioContext();
       state.isPlaying = true;
       updateTransportButtonsUI();
@@ -1081,11 +1305,16 @@
     // NOTE: the Android wrapper calls pausePlayback() when the app goes to the background.
     function pausePlayback() {
       haltScheduler();
+      releaseHold();
       updateTransportButtonsUI();
     }
 
     function stopPlayback() {
       haltScheduler();
+      stopDrone();
+      state.heldId = null;
+      state.heldInfo = null;
+      paintTunerButtons();
       state.currentStepIndex = -1;
       state.activeNoteObj = null;
       updateTransportButtonsUI();
@@ -1095,6 +1324,11 @@
     }
 
     function resetSequenceStepOnConfigChange() {
+      // A held fretboard note may not exist in the new scale/shape; a tuner string is unaffected
+      if (state.heldId && !state.heldId.startsWith('tuner-')) {
+        stopDrone();
+        state.heldId = null;
+      }
       state.currentStepIndex = -1;
       state.activeNoteObj = null;
       if (state.isPlaying) {
@@ -1108,18 +1342,11 @@
 
     function updateTransportButtonsUI() {
       const btnPlay = document.getElementById('btnPlayToggle');
-      const playIcon = document.getElementById('playIcon');
-      const playLabel = document.getElementById('playLabel');
-
-      if (state.isPlaying) {
-        playIcon.textContent = '⏸';
-        playLabel.textContent = 'Pause';
-        btnPlay.className = 'flex items-center gap-2 px-4 py-2 rounded-xl font-semibold text-sm bg-sky-400 hover:bg-sky-300 text-slate-950 shadow-lg shadow-sky-400/25 transition active:scale-95';
-      } else {
-        playIcon.textContent = '▶';
-        playLabel.textContent = 'Play';
-        btnPlay.className = 'flex items-center gap-2 px-4 py-2 rounded-xl font-semibold text-sm bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-lg shadow-amber-500/20 transition active:scale-95';
-      }
+      document.getElementById('iconPlay').classList.toggle('hidden', state.isPlaying);
+      document.getElementById('iconPause').classList.toggle('hidden', !state.isPlaying);
+      btnPlay.setAttribute('aria-label', state.isPlaying ? 'Pause' : 'Play');
+      btnPlay.className = 'w-16 h-16 rounded-full flex items-center justify-center text-slate-950 shadow-lg active:scale-95 transition '
+        + (state.isPlaying ? 'bg-sky-400 shadow-sky-400/25' : 'bg-amber-500 shadow-amber-500/25');
     }
 
     function stepBy(delta) {
@@ -1149,10 +1376,20 @@
     function onFretboardNoteClick(id) {
       const note = cachedScaleData && cachedScaleData.neck.get(id);
       if (!note) return;
-      state.activeNoteObj = note;
       const stepIdx = state.sequence.findIndex(n => n.id === id);
-      if (!state.isPlaying && stepIdx !== -1) state.currentStepIndex = stepIdx;
-      playGuitarNote(note.midi, 0.7, note.isRoot);
+
+      if (state.holdMode) {
+        if (state.isPlaying) pausePlayback();
+        if (state.heldId === id) { releaseHold(); return; }
+        state.activeNoteObj = note;
+        if (stepIdx !== -1) state.currentStepIndex = stepIdx;
+        holdPitch(id, note.midi, note.stringNumber);
+        paintTunerButtons();
+      } else {
+        state.activeNoteObj = note;
+        if (!state.isPlaying && stepIdx !== -1) state.currentStepIndex = stepIdx;
+        playGuitarNote(note.midi, 1.3, note.isRoot, 0, note.stringNumber);
+      }
       updateLiveNoteBanner();
       paintActiveNote();
       vibrateString(note.stringNumber);
@@ -1253,8 +1490,31 @@
         saveSettings();
       });
 
-      document.getElementById('btnGhostNotes').addEventListener('click', () => {
-        state.showGhostNotes = !state.showGhostNotes;
+      document.getElementById('btnHoldToggle').addEventListener('click', () => {
+        state.holdMode = !state.holdMode;
+        if (!state.holdMode) releaseHold();
+        paintControls();
+        updateLiveNoteBanner();
+        saveSettings();
+      });
+      onButtonClick('tunerButtons', 'data-tuner-string', (val) => toggleTunerString(parseInt(val, 10)));
+      document.getElementById('chkTunerOctave').addEventListener('change', (e) => {
+        state.tunerOctave = e.target.checked;
+        if (state.heldId && state.heldId.startsWith('tuner-')) {
+          const stringNumber = parseInt(state.heldId.slice(6), 10);
+          releaseHold();
+          toggleTunerString(stringNumber);
+        }
+        saveSettings();
+      });
+      onButtonClick('tabBar', 'data-tab', (val) => {
+        state.activeTab = val;
+        paintControls();
+        saveSettings();
+      });
+
+      document.getElementById('btnGhostNotes').addEventListener('change', (e) => {
+        state.showGhostNotes = e.target.checked;
         paintControls();
         renderFretboardsOnly();
         saveSettings();
@@ -1264,6 +1524,7 @@
       document.getElementById('selectToneType').addEventListener('change', (e) => {
         state.toneType = e.target.value;
         pluckCache.clear();
+        applyToneToGraph();
         saveSettings();
       });
       document.getElementById('sliderVolume').addEventListener('input', (e) => {
@@ -1290,7 +1551,7 @@
       window.addEventListener('keydown', (e) => {
         if (e.ctrlKey || e.metaKey || e.altKey) return;
         const tag = e.target && e.target.tagName;
-        if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+        if ((tag === 'INPUT' && e.target.type !== 'checkbox') || tag === 'SELECT' || tag === 'TEXTAREA') return;
         if (e.code === 'Space') {
           if (tag === 'BUTTON') return; // let Space press the focused button
           e.preventDefault();

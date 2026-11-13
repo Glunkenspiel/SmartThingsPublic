@@ -147,7 +147,7 @@ const playing = await page.evaluate(() => ({
   idx: state.currentStepIndex, isPlaying: state.isPlaying, ctx: audioCtx && audioCtx.state,
   lit: document.querySelectorAll('#horizontalFretboard .note-marker.is-playing').length,
   current: document.querySelectorAll('.step-btn.is-current').length,
-  label: document.getElementById('playLabel').textContent
+  label: document.getElementById('btnPlayToggle').getAttribute('aria-label')
 }));
 check(playing.isPlaying && playing.label === 'Pause', 'not playing ' + JSON.stringify(playing));
 check(playing.idx >= 9 && playing.idx <= 10, 'step timing drifted: ' + JSON.stringify(playing));
@@ -199,10 +199,108 @@ await page.selectOption('#selectPositionVariant', '3NPS_4');
 await page.selectOption('#selectMode', 'min_pent');
 check(await page.evaluate(() => state.shape === 'E' && document.getElementById('optgroup3nps').disabled), '3NPS fallback for pentatonic');
 
+// Hold mode and tuning reference
+await page.selectOption('#selectMode', 'ionian');
+await page.click('#btnHoldToggle');
+await page.click('#horizontalFretboard [data-note-cell="s6-f11"]');
+check(await page.evaluate(() => state.heldId === 's6-f11' && !!drone && document.querySelectorAll('#horizontalFretboard .is-held').length === 1), 'hold a fretboard note');
+check((await page.textContent('#liveStringFretText')).startsWith('Holding'), 'hold banner');
+await page.keyboard.press('ArrowRight');
+check(await page.evaluate(() => !!drone && state.heldId === state.activeNoteObj.id && state.heldId !== 's6-f11'), 'stepping moves the held note');
+await page.click(`#horizontalFretboard [data-note-cell="${await page.evaluate(() => state.heldId)}"]`);
+check(await page.evaluate(() => !drone && state.heldId === null), 'tapping the held note releases it');
+await page.click('[data-tuner-string="5"]');
+check(await page.evaluate(() => state.heldId === 'tuner-5' && drone && drone.midi === 45 && Math.abs(drone.osc.frequency.value - 110) < 0.01), 'tuner holds A = 110 Hz');
+check(await page.evaluate(() => document.querySelector('[data-tuner-string="5"]').getAttribute('aria-pressed') === 'true'), 'tuner button lit');
+await page.click('#chkTunerOctave');
+check(await page.evaluate(() => drone && drone.midi === 57), 'tuner octave up');
+await page.click('#chkTunerOctave');
+if (shotDir) await page.screenshot({ path: join(shotDir, 'desktop-tuner.png'), fullPage: true });
+await page.click('#btnPlayToggle');
+check(await page.evaluate(() => state.isPlaying && !drone && state.heldId === null), 'play releases the hold');
+await page.click('[data-tuner-string="6"]');
+check(await page.evaluate(() => !state.isPlaying && state.heldId === 'tuner-6'), 'tuner pauses playback');
+await page.evaluate(() => pausePlayback());
+check(await page.evaluate(() => !drone), 'backgrounding the app silences the held note');
+await page.click('#btnHoldToggle');
+
+// Rendered audio: no clipping, no silence, steady reference tone
+const audio = await page.evaluate(async () => {
+  const sr = 48000;
+  const stats = (buf, from, to) => {
+    const d = buf.getChannelData(0);
+    let peak = 0, sum = 0, bad = false;
+    for (let i = Math.floor(from * sr); i < Math.floor(to * sr); i++) {
+      const v = d[i];
+      if (!Number.isFinite(v)) bad = true;
+      peak = Math.max(peak, Math.abs(v)); sum += v * v;
+    }
+    return { peak, rms: Math.sqrt(sum / ((to - from) * sr)), bad };
+  };
+  const useOffline = (seconds) => {
+    const off = new OfflineAudioContext(2, sr * seconds, sr);
+    off.resume = async () => {};
+    audioCtx = off; pluckCache.clear();
+    setupAudioGraph(off);
+    return off;
+  };
+  const out = {};
+  for (const tone of Object.keys(TONES)) {
+    state.toneType = tone; state.volume = 1;
+    // Worst case: fastest sixteenth run over the whole neck with the click on
+    let off = useOffline(6);
+    state.shape = 'FULL'; state.pattern = 'asc_desc';
+    const seq = buildPracticeSequence(getScaleData().sortedUniquePitch);
+    const step = 60 / 240 / 4;
+    let t = 0.05;
+    for (let i = 0; t < 5; i++, t += step) {
+      const n = seq[i % seq.length];
+      playGuitarNote(n.midi, Math.max(0.9, step * 2.5), n.isRoot, t, n.stringNumber);
+      if (i % 4 === 0) playMetronomeClick(i % 16 === 0, t);
+    }
+    out[tone + '_fast'] = stats(await off.startRendering(), 0.5, 5);
+    // A single quiet-ish case: one high note and one low note
+    off = useOffline(3);
+    playGuitarNote(40, 1.3, false, 0.1, 6);
+    playGuitarNote(81, 1.3, false, 1.5, 1);
+    const single = await off.startRendering();
+    out[tone + '_low'] = stats(single, 0.1, 0.6);
+    out[tone + '_high'] = stats(single, 1.5, 2.0);
+  }
+  // Held reference tone: level must be steady and the pitch exact
+  const off = useOffline(4);
+  startDrone(45);
+  const d = (await off.startRendering()).getChannelData(0);
+  const windows = [];
+  for (let w = 0; w < 6; w++) { let s2 = 0; for (let i = 0; i < sr / 2; i++) { const v = d[sr + w * sr / 2 + i]; s2 += v * v; } windows.push(Math.sqrt(s2 / (sr / 2))); }
+  let best = 0, bestF = 0;
+  for (let f = 109; f <= 111; f += 0.002) {
+    let re = 0, im = 0; const wv = 2 * Math.PI * f / sr;
+    for (let i = 0; i < sr * 2; i += 4) { const h = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / (sr * 2)); re += h * d[sr + i] * Math.cos(wv * i); im += h * d[sr + i] * Math.sin(wv * i); }
+    const m = re * re + im * im; if (m > best) { best = m; bestF = f; }
+  }
+  out.drone = { min: Math.min(...windows), max: Math.max(...windows), cents: 1200 * Math.log2(bestF / 110) };
+  audioCtx = null; masterGain = null; noteBus = null; bodyEq = null; drone = null; pluckCache.clear();
+  state.toneType = 'acoustic'; state.volume = 0.8; state.shape = 'E';
+  updateAllUI();
+  return out;
+});
+for (const [name, a] of Object.entries(audio)) {
+  if (name === 'drone') continue;
+  check(!a.bad && a.peak < 0.99, `${name}: clipping or bad samples ${JSON.stringify(a)}`);
+  check(a.rms > 0.02 && a.peak > 0.12, `${name}: too quiet ${JSON.stringify(a)}`);
+}
+check(audio.drone.max / audio.drone.min < 1.02 && audio.drone.min > 0.03, 'drone level unsteady ' + JSON.stringify(audio.drone));
+check(Math.abs(audio.drone.cents) < 0.5, 'drone pitch ' + audio.drone.cents);
+console.log('audio levels:', Object.entries(audio).map(([k, a]) => k === 'drone' ? `drone rms ${a.min.toFixed(3)} (${a.cents.toFixed(2)} cents)` : `${k} peak ${a.peak.toFixed(2)} rms ${a.rms.toFixed(3)}`).join(' | '));
+
 // 6. Settings persist across reloads
 await page.reload();
+await page.selectOption('#selectMode', 'min_pent');
+await page.evaluate(() => { state.keyRoot = 3; state.showGhostNotes = false; state.labelMode = 'finger'; applyConfigChange(); });
+await page.reload();
 check(await page.evaluate(() => state.scale === 'min_pent' && state.keyRoot === 3 && state.labelMode === 'finger' && !state.showGhostNotes), 'settings persisted');
-check((await page.textContent('#btnGhostNotes')).includes('Off'), 'ghost label restored');
+check(await page.evaluate(() => document.getElementById('btnGhostNotes').checked === false), 'ghost toggle restored');
 await page.evaluate(() => { localStorage.clear(); });
 
 // 7. Phone layout
@@ -212,16 +310,23 @@ await phone.route(/fonts\.(googleapis|gstatic)\.com/, r => r.abort());
 await phone.goto(url);
 check(await phone.evaluate(() => !document.getElementById('verticalFretboardWrapper').classList.contains('hidden')), 'phone uses vertical neck');
 check(await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'phone: no sideways page scroll');
+check(await phone.evaluate(() => getComputedStyle(document.querySelector('[data-panel="view"]')).display === 'none' && getComputedStyle(document.querySelector('[data-panel="key"]')).display !== 'none'), 'phone shows one settings panel');
+await phone.tap('[data-tab="view"]');
 await phone.tap('[data-orient="horizontal"]');
+await phone.tap('[data-tab="shape"]');
 await phone.selectOption('#selectPositionVariant', 'A');
 await phone.evaluate(() => { state.keyRoot = 4; applyConfigChange(); });
 check(await phone.evaluate(() => document.getElementById('horizontalFretboardWrapper').scrollLeft > 100), 'horizontal neck scrolls to the shape');
 if (shotDir) {
-  await phone.screenshot({ path: join(shotDir, 'phone-horizontal.png'), fullPage: true });
+  await phone.screenshot({ path: join(shotDir, 'phone-horizontal.png') });
+  await phone.tap('[data-tab="view"]');
   await phone.tap('[data-orient="auto"]');
+  await phone.tap('[data-tab="tuner"]');
+  await phone.screenshot({ path: join(shotDir, 'phone-tuner.png') });
+  await phone.tap('[data-tab="key"]');
   await phone.tap('#btnPlayToggle');
   await phone.waitForTimeout(700);
-  await phone.screenshot({ path: join(shotDir, 'phone-vertical.png'), fullPage: true });
+  await phone.screenshot({ path: join(shotDir, 'phone-vertical.png') });
 }
 
 check(errors.length === 0, 'page errors: ' + errors.join(' | '));
