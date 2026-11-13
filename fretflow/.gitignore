@@ -4,3 +4,4 @@ android/*.apk
 android/.gradle/
 android/app/build/
 *.zip
+android/*.idsig
