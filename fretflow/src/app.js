@@ -44,14 +44,28 @@
       locrian:    { name: 'Locrian',          parentOffset: -11, intervals: [0, 1, 3, 5, 6, 8, 10], degrees: ['1', 'b2', 'b3', '4', 'b5', 'b6', 'b7'],  chordIdx: [0, 2, 4, 6] },
       maj_pent:   { name: 'Major Pentatonic', parentOffset: 0,   intervals: [0, 2, 4, 7, 9],        degrees: ['1', '2', '3', '5', '6'],                 chordIdx: [0, 2, 3] },
       min_pent:   { name: 'Minor Pentatonic', parentOffset: -9,  intervals: [0, 3, 5, 7, 10],       degrees: ['1', 'b3', '4', '5', 'b7'],               chordIdx: [0, 1, 3, 4] },
-      blues:      { name: 'Blues',            parentOffset: -9,  intervals: [0, 3, 5, 6, 7, 10],    degrees: ['1', 'b3', '4', 'b5', '5', 'b7'],         chordIdx: [0, 1, 4, 5] }
+      blues:      { name: 'Blues',            parentOffset: -9,  intervals: [0, 3, 5, 6, 7, 10],    degrees: ['1', 'b3', '4', 'b5', '5', 'b7'],         chordIdx: [0, 1, 4, 5] },
+      // Minor variations and exotic colours. These are not modes of the major scale, so parentOffset
+      // only decides which CAGED position name lines up with which stretch of the neck.
+      harm_minor:   { name: 'Harmonic Minor',    parentOffset: -9, intervals: [0, 2, 3, 5, 7, 8, 11],     degrees: ['1', '2', 'b3', '4', '5', 'b6', '7'],        chordIdx: [0, 2, 4, 6] },
+      mel_minor:    { name: 'Melodic Minor',     parentOffset: -9, intervals: [0, 2, 3, 5, 7, 9, 11],     degrees: ['1', '2', 'b3', '4', '5', '6', '7'],         chordIdx: [0, 2, 4, 6] },
+      phryg_dom:    { name: 'Phrygian Dominant', parentOffset: -4, intervals: [0, 1, 4, 5, 7, 8, 10],     degrees: ['1', 'b2', '3', '4', '5', 'b6', 'b7'],       chordIdx: [0, 2, 4, 6] },
+      lydian_dom:   { name: 'Lydian Dominant',   parentOffset: -5, intervals: [0, 2, 4, 6, 7, 9, 10],     degrees: ['1', '2', '3', '#4', '5', '6', 'b7'],        chordIdx: [0, 2, 4, 6] },
+      dbl_harmonic: { name: 'Double Harmonic',   parentOffset: 0,  intervals: [0, 1, 4, 5, 7, 8, 11],     degrees: ['1', 'b2', '3', '4', '5', 'b6', '7'],        chordIdx: [0, 2, 4, 6] },
+      hung_minor:   { name: 'Hungarian Minor',   parentOffset: -9, intervals: [0, 2, 3, 6, 7, 8, 11],     degrees: ['1', '2', 'b3', '#4', '5', 'b6', '7'],       chordIdx: [0, 2, 4, 6] },
+      hirajoshi:    { name: 'Hirajoshi',         parentOffset: -9, intervals: [0, 2, 3, 7, 8],            degrees: ['1', '2', 'b3', '5', 'b6'],                  chordIdx: [0, 2, 3] },
+      whole_tone:   { name: 'Whole Tone',        parentOffset: 0,  intervals: [0, 2, 4, 6, 8, 10],        degrees: ['1', '2', '3', '#4', '#5', 'b7'],            chordIdx: [0, 2, 4, 5] },
+      diminished:   { name: 'Diminished (W-H)',  parentOffset: -9, intervals: [0, 2, 3, 5, 6, 8, 9, 11],  degrees: ['1', '2', 'b3', '4', 'b5', 'b6', '6', '7'],  chordIdx: [0, 2, 4, 6] }
     };
+    const DIATONIC = ['ionian', 'dorian', 'phrygian', 'lydian', 'mixolydian', 'aeolian', 'locrian', 'maj_pent', 'min_pent', 'blues'];
+    const NAMES_SHARP = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+    const NAMES_FLAT = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
 
     // CAGED windows: fret offsets from the parent major root on the 6th string
     const CAGED_OFFSETS = {
       E: [-1, 3],
       D: [1, 5],
-      C: [4, 7],
+      C: [4, 8],
       A: [6, 10],
       G: [8, 12]
     };
@@ -177,6 +191,11 @@
           names.push(LETTERS[letter] + accidentalText(acc));
         }
         if (!best || cost < best.cost) best = { cost, names };
+      }
+      if (best.cost >= 20) {
+        // Would need a double sharp/flat (some exotic scales in remote keys): use plain names instead
+        const table = [1, 3, 5, 8, 10].includes(rootPc) ? NAMES_FLAT : NAMES_SHARP;
+        return scaleObj.intervals.map(semi => table[(rootPc + semi) % 12]);
       }
       return best.names;
     }
@@ -514,10 +533,14 @@
         midi += (scaleObj.intervals[next] - scaleObj.intervals[deg] + 12) % 12;
         deg = next;
       }
+      // Scales with wide steps can dip below the nut when started low: move the shape up an octave
+      let lowest = Infinity;
+      for (let s = 0; s < 6; s++) lowest = Math.min(lowest, pitches[s * 3] - STRING_TUNING[5 - s].midi);
+      const octaveShift = lowest < 0 ? 12 : 0;
       const cells = []; // { id, finger }
       for (let s = 0; s < 6; s++) {
         const strInfo = STRING_TUNING[5 - s];
-        const frets = [0, 1, 2].map(k => pitches[s * 3 + k] - strInfo.midi);
+        const frets = [0, 1, 2].map(k => pitches[s * 3 + k] - strInfo.midi + octaveShift);
         const middleFinger = frets[1] - frets[0] === 1 ? 2 : (frets[2] - frets[1] === 1 ? 3 : 2);
         const fingers = [1, middleFinger, 4];
         frets.forEach((fret, k) => {
@@ -578,7 +601,15 @@
         });
       } else {
         const win = computeCagedWindow(state.keyRoot, state.scale, state.shape);
-        activeShapeNotes = [...neck.values()].filter(n => n.fret >= win.minFret && n.fret <= win.maxFret);
+        // A five-fret window reaches every pitch in its range, so any scale fits. The only overlap is
+        // one pitch shared by the G and B strings: keep the easier, lower-fret copy.
+        const inWindow = [...neck.values()].filter(n => n.fret >= win.minFret && n.fret <= win.maxFret);
+        const lowestFretForPitch = new Map();
+        inWindow.forEach(n => {
+          const seen = lowestFretForPitch.get(n.midi);
+          if (seen === undefined || n.fret < seen) lowestFretForPitch.set(n.midi, n.fret);
+        });
+        activeShapeNotes = inWindow.filter(n => lowestFretForPitch.get(n.midi) === n.fret);
         // One finger per fret, anchored on the lowest fretted note of the shape
         const fretted = activeShapeNotes.filter(n => n.fret > 0).map(n => n.fret);
         const anchor = fretted.length ? Math.min(...fretted) : 1;
@@ -618,52 +649,65 @@
       };
     }
 
-    // Up through the list, then back down without repeating the turnaround notes
-    function pendulum(list) {
-      if (list.length <= 2) return [...list];
-      return [...list, ...list.slice(1, list.length - 1).reverse()];
-    }
-
-    // Build ordered practice sequence from sortedUniquePitch according to selected pattern
+    // Every pattern starts and ends on the root. From the lowest root in the shape it climbs to the
+    // top note, comes down to the bottom note, and climbs back to the root it started from.
     function buildPracticeSequence(sortedNotes) {
       if (!sortedNotes || sortedNotes.length === 0) return [];
       const pat = state.pattern;
-      const n = sortedNotes.length;
       const chordIdx = SCALES[state.scale].chordIdx;
 
-      if (pat === 'ascending') return [...sortedNotes];
-      if (pat === 'descending') return [...sortedNotes].reverse();
-      if (pat === 'asc_desc') return pendulum(sortedNotes);
-      if (pat === 'arpeggio_7') {
-        return pendulum(sortedNotes.filter(item => chordIdx.includes(item.scaleDegreeIndex)));
-      }
+      let pool = sortedNotes;
+      if (pat === 'arpeggio_7') pool = sortedNotes.filter(item => chordIdx.includes(item.scaleDegreeIndex));
       if (pat === 'arpeggio_triad') {
         const triad = chordIdx.slice(0, 3);
-        return pendulum(sortedNotes.filter(item => triad.includes(item.scaleDegreeIndex)));
+        pool = sortedNotes.filter(item => triad.includes(item.scaleDegreeIndex));
       }
+      const n = pool.length;
+      if (n <= 1) return [...pool];
+
+      let root = pool.findIndex(item => item.isRoot);
+      if (root === -1) root = 0;
+      let topRoot = root;
+      for (let i = n - 1; i > root; i--) {
+        if (pool[i].isRoot) { topRoot = i; break; }
+      }
+      const rootNote = pool[root];
+
+      if (pat === 'ascending' || pat === 'descending') {
+        // Root to root across the shape
+        const run = topRoot > root ? pool.slice(root, topRoot + 1) : pool.slice(root);
+        return pat === 'ascending' ? run : run.reverse();
+      }
+
       if (pat === 'thirds' || pat === 'seq_3' || pat === 'seq_4') {
-        // Each group is a list of offsets from the starting note
+        // Each group is a list of offsets from its starting note
         const offsets = pat === 'thirds' ? [0, 2] : pat === 'seq_3' ? [0, 1, 2] : [0, 1, 2, 3];
         const reach = offsets[offsets.length - 1];
-        if (n <= reach) return pendulum(sortedNotes);
-        const seq = [];
-        for (let i = 0; i + reach < n; i++) {
-          offsets.forEach(o => seq.push(sortedNotes[i + o]));
+        if (n > reach) {
+          const seq = [];
+          for (let i = root; i + reach < n; i++) offsets.forEach(o => seq.push(pool[i + o]));      // root up to the top
+          for (let i = n - 1; i - reach >= 0; i--) offsets.forEach(o => seq.push(pool[i - o]));    // top down to the bottom
+          for (let i = 0; i < root && i + reach < n; i++) offsets.forEach(o => seq.push(pool[i + o])); // bottom back up
+          if (seq[seq.length - 1] !== rootNote) seq.push(rootNote);
+          if (seq[0] !== rootNote) seq.unshift(rootNote);
+          return seq;
         }
-        for (let i = n - 1; i - reach >= 0; i--) {
-          offsets.forEach(o => seq.push(sortedNotes[i - o]));
-        }
-        return seq;
       }
+
       if (pat === 'pedal_root') {
-        const rootNote = sortedNotes.find(item => item.isRoot) || sortedNotes[0];
         const seq = [];
-        for (const item of sortedNotes) {
+        for (const item of pool) {
           if (item.id !== rootNote.id) seq.push(rootNote, item);
         }
-        return seq.length ? seq : [...sortedNotes];
+        seq.push(rootNote);
+        return seq;
       }
-      return [...sortedNotes];
+
+      // Normal and arpeggio patterns: root -> top -> bottom -> root
+      const seq = pool.slice(root);
+      for (let i = n - 2; i >= 0; i--) seq.push(pool[i]);
+      for (let i = 1; i <= root; i++) seq.push(pool[i]);
+      return seq;
     }
 
     /********************************************************************
@@ -1079,11 +1123,13 @@
       paintControls();
 
       const { scaleObj, degreeNames, pcName, windowRange } = cachedScaleData;
-      const parentMajor = pcName[getParentMajorRoot(state.keyRoot, state.scale)];
+      const parentPc = getParentMajorRoot(state.keyRoot, state.scale);
+      const parentMajor = pcName[parentPc] || (/b/.test(degreeNames[0]) ? NAMES_FLAT : NAMES_SHARP)[parentPc];
       document.getElementById('headerSummaryBadge').textContent =
         `${degreeNames[0]} ${scaleObj.name} • ${SHAPE_LABELS[state.shape] || state.shape}`;
       document.getElementById('relativeMajorHint').textContent =
-        scaleObj.parentOffset === 0 ? `Shapes of ${parentMajor} major` : `Parent Major: ${parentMajor}`;
+        !DIATONIC.includes(state.scale) ? `Positions of ${parentMajor} major`
+          : scaleObj.parentOffset === 0 ? `Shapes of ${parentMajor} major` : `Parent Major: ${parentMajor}`;
       document.getElementById('modeFormulaBadge').textContent = scaleObj.degrees.join(' ');
 
       let spanText = `Frets ${windowRange.minFret}–${windowRange.maxFret}`;

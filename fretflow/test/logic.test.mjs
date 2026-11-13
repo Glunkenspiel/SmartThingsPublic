@@ -64,11 +64,11 @@ const sweep = await page.evaluate(() => {
         if (shape.startsWith('3NPS_')) {
           if (perString.some(c => c !== 3)) problems.push(tag + ': not 3 per string ' + perString);
           if (new Set(notes.map(n => n.midi)).size !== 18) problems.push(tag + ': duplicate pitches');
-          if (d.windowRange.maxFret - d.windowRange.minFret > 7) problems.push(tag + ': span too wide');
+          if (d.windowRange.maxFret - d.windowRange.minFret > (DIATONIC.includes(scale) ? 7 : 8)) problems.push(tag + ': span too wide');
           if (notes.some(n => !n.finger)) problems.push(tag + ': missing finger');
         } else if (shape !== 'FULL') {
-          if (seven && perString.some(c => c < 2 || c > 3)) problems.push(tag + ': per-string ' + perString);
-          if (seven && new Set(notes.map(n => n.midi)).size !== notes.length) problems.push(tag + ': unison duplicate');
+          if (seven && DIATONIC.includes(scale) && perString.some(c => c < 2 || c > 3)) problems.push(tag + ': per-string ' + perString);
+          if (new Set(notes.map(n => n.midi)).size !== notes.length) problems.push(tag + ': unison duplicate');
           if (d.windowRange.maxFret - d.windowRange.minFret > 4) problems.push(tag + ': span ' + JSON.stringify(d.windowRange));
           if (!notes.some(n => n.isRoot)) problems.push(tag + ': no root');
         }
@@ -76,6 +76,8 @@ const sweep = await page.evaluate(() => {
           state.pattern = pattern;
           const seq = buildPracticeSequence(d.sortedUniquePitch);
           if (!seq.length || seq.some(n => !n)) problems.push(tag + ' ' + pattern + ': bad sequence');
+          else if (!seq[0].isRoot || !seq[seq.length - 1].isRoot) problems.push(tag + ' ' + pattern + ': must start and end on the root');
+          else if (pattern === 'asc_desc' && new Set(seq.map(n => n.id)).size !== d.sortedUniquePitch.length) problems.push(tag + ': pendulum must visit every note');
         }
       }
     }
@@ -86,6 +88,12 @@ const sweep = await page.evaluate(() => {
 });
 check(sweep.problems.length === 0, `${sweep.problems.length} shape problems, e.g. ${sweep.problems.slice(0, 8).join(' | ')}`);
 console.log(`shape sweep: ${sweep.combos} combinations`);
+
+// C major E-shape: starts on C (not the B below it), touches that B on the way back, ends on C
+const cRun = await page.evaluate(() => state.sequence.map(n => n.noteName + n.midi).join(' '));
+check(cRun.startsWith('C48 D50 E52') && cRun.endsWith('D50 C48 B47 C48'), 'C major run: ' + cRun);
+const spellX = await page.evaluate(() => [spellScale(9, SCALES.harm_minor).join(' '), spellScale(4, SCALES.phryg_dom).join(' '), spellScale(0, SCALES.whole_tone).join(' ')]);
+check(spellX[0] === 'A B C D E F G#' && spellX[1] === 'E F G# A B C D' && spellX[2] === 'C D E F# G# Bb', 'exotic spelling: ' + spellX.join(' | '));
 
 // 3. Known shapes
 const known = await page.evaluate(() => {

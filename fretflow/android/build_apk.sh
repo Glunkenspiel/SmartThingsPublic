@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Linux/macOS equivalent of build_apk.bat: builds McFretsky.apk with the Android SDK tools, no Gradle.
+# Linux/macOS equivalent of build_apk.bat: builds Fretsky.apk with the Android SDK tools, no Gradle.
 # Usage: BUILD_TOOLS=/path/to/build-tools/34.0.0 ANDROID_JAR=/path/to/platforms/android-34/android.jar ./build_apk.sh
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -33,6 +33,6 @@ if [ ! -f "$KEYSTORE" ]; then
     -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" >/dev/null 2>&1
 fi
 java -jar "$BUILD_TOOLS/lib/apksigner.jar" sign --ks "$KEYSTORE" --ks-pass pass:android --key-pass pass:android \
-  --out McFretsky.apk "$OUT/aligned.apk"
-java -jar "$BUILD_TOOLS/lib/apksigner.jar" verify --verbose McFretsky.apk | head -5
-echo "Built $(pwd)/McFretsky.apk"
+  --out Fretsky.apk "$OUT/aligned.apk"
+java -jar "$BUILD_TOOLS/lib/apksigner.jar" verify --verbose Fretsky.apk | head -5
+echo "Built $(pwd)/Fretsky.apk"
