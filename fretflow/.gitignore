@@ -3,3 +3,4 @@ android/build_sdk/
 android/*.apk
 android/.gradle/
 android/app/build/
+*.zip
