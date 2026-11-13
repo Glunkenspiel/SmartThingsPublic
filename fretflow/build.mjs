@@ -1,6 +1,6 @@
 // Builds self-contained single-file pages (no CDN needed at runtime):
 //   dist/web/index.html                      -> "FretFlow", paste into the Google Sites embed
-//   android/app/src/main/assets/index.html   -> "Fretsky", bundled in the Android app (fully offline)
+//   android/app/src/main/assets/index.html   -> "McFretsky", bundled in the Android app (fully offline)
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -37,7 +37,7 @@ function render(appName, fonts) {
 const targets = [
   ['dist/web/index.html', render('FretFlow', webFonts)],
   // The Android build makes no network requests at all (no INTERNET permission needed)
-  ['android/app/src/main/assets/index.html', render('Fretsky', '')]
+  ['android/app/src/main/assets/index.html', render('McFretsky', '')]
 ];
 for (const [rel, out] of targets) {
   const file = join(root, rel);

@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 echo ========================================================
-echo   Fretsky Instant Android SDK APK Compiler (No Gradle)
+echo   McFretsky Instant Android SDK APK Compiler (No Gradle)
 echo ========================================================
 
 :: 1. Locate Android Studio JDK
@@ -119,7 +119,7 @@ pushd "build_sdk"
 popd
 
 :: 8. Align and Sign APK
-echo [5/5] Aligning and signing Fretsky.apk...
+echo [5/5] Aligning and signing McFretsky.apk...
 "%BUILD_TOOLS%\zipalign.exe" -f -p 4 "build_sdk\unaligned.apk" "build_sdk\aligned.apk"
 
 if not exist "build_sdk\debug.keystore" (
@@ -136,7 +136,7 @@ if not exist "build_sdk\debug.keystore" (
     --ks "build_sdk\debug.keystore" ^
     --ks-pass pass:android ^
     --key-pass pass:android ^
-    --out "Fretsky.apk" ^
+    --out "McFretsky.apk" ^
     "build_sdk\aligned.apk"
 if errorlevel 1 (
     echo [ERROR] apksigner failed.
@@ -147,7 +147,7 @@ if errorlevel 1 (
 echo.
 echo ========================================================
 echo   SUCCESS! Your installable APK is ready at:
-echo   %~dp0Fretsky.apk
+echo   %~dp0McFretsky.apk
 echo ========================================================
-explorer.exe /select,"%~dp0Fretsky.apk"
+explorer.exe /select,"%~dp0McFretsky.apk"
 pause
