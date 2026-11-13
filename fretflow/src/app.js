@@ -5,7 +5,7 @@
     const LETTERS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
     const LETTER_PC = [0, 2, 4, 5, 7, 9, 11];
     const SETTINGS_KEY = 'fretTrainer.settings.v2';
-    const TAB_IDS = ['key', 'shape', 'pattern', 'tempo', 'tuner', 'view'];
+    const TAB_IDS = ['key', 'chords', 'shape', 'pattern', 'tempo', 'tuner', 'view'];
 
     const KEY_DISPLAY = [
       { id: 0, label: 'C' },
@@ -113,6 +113,8 @@
       holdMode: false,      // tapped notes sustain until tapped again
       tunerOctave: false,   // tuning reference one octave up
       activeTab: 'key',     // settings tab shown on phones
+      backing: false,       // strum the chosen chord once per bar under the pattern
+      chordDegree: null,    // index into the current chord row (runtime only)
       // --- runtime only (not saved) ---
       heldId: null,         // fretboard cell id or 'tuner-<string>' currently sustaining
       heldInfo: null,
@@ -124,7 +126,7 @@
     };
     const PERSISTED_KEYS = ['keyRoot', 'scale', 'shape', 'pattern', 'tempo', 'subdivision', 'speedTrainer',
       'labelMode', 'orientation', 'showGhostNotes', 'toneType', 'volume', 'loop', 'metronome',
-      'holdMode', 'tunerOctave', 'activeTab'];
+      'holdMode', 'tunerOctave', 'activeTab', 'backing'];
 
     function saveSettings() {
       try {
@@ -155,6 +157,7 @@
         if (typeof saved.loop === 'boolean') state.loop = saved.loop;
         if (typeof saved.metronome === 'boolean') state.metronome = saved.metronome;
         if (typeof saved.holdMode === 'boolean') state.holdMode = saved.holdMode;
+        if (typeof saved.backing === 'boolean') state.backing = saved.backing;
         if (typeof saved.tunerOctave === 'boolean') state.tunerOctave = saved.tunerOctave;
         if (TAB_IDS.includes(saved.activeTab)) state.activeTab = saved.activeTab;
       } catch (err) { /* ignore corrupt or unavailable storage */ }
@@ -392,7 +395,8 @@
 
     // when: AudioContext time to start (omit for "now"). Returns the source node.
     // stringNumber: the note cuts off whatever was ringing on that string, like a real guitar.
-    function playGuitarNote(midi, durationSec, isRoot, when, stringNumber) {
+    // level: volume multiplier (chord strums use a lower level per string).
+    function playGuitarNote(midi, durationSec, isRoot, when, stringNumber, level) {
       const ctx = ensureAudioContext();
       if (!ctx) return null;
       const startAt = Math.max(when || 0, ctx.currentTime);
@@ -411,7 +415,7 @@
       const gain = ctx.createGain();
       const releaseAt = startAt + Math.max(durationSec || 0.45, 0.3);
       gain.gain.setValueAtTime(0, startAt);
-      gain.gain.linearRampToValueAtTime(isRoot ? 0.46 : 0.38, startAt + 0.002);
+      gain.gain.linearRampToValueAtTime((isRoot ? 0.46 : 0.38) * (level || 1), startAt + 0.002);
       gain.gain.setTargetAtTime(0, releaseAt, 0.1);
 
       if (stringNumber) {
@@ -711,6 +715,107 @@
     }
 
     /********************************************************************
+     * CHORDS OF THE KEY
+     ********************************************************************/
+    // Scales whose seven stacked-third chords have ordinary names
+    const CHORD_ROW_SCALES = ['ionian', 'dorian', 'phrygian', 'lydian', 'mixolydian', 'aeolian', 'locrian', 'harm_minor', 'mel_minor'];
+    const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+    let cachedChords = [];
+
+    function chordQuality(third, fifth) {
+      if (third === 4 && fifth === 7) return { suffix: '', kind: 'major' };
+      if (third === 3 && fifth === 7) return { suffix: 'm', kind: 'minor' };
+      if (third === 3 && fifth === 6) return { suffix: 'dim', kind: 'dim' };
+      if (third === 4 && fifth === 8) return { suffix: 'aug', kind: 'aug' };
+      if (third === 4 && fifth === 6) return { suffix: '(b5)', kind: 'major' };
+      return { suffix: '5', kind: 'major' };
+    }
+
+    // One triad per scale degree for the major modes and harmonic/melodic minor; otherwise just the root chord
+    function buildChords(scaleData) {
+      const { scaleObj, scalePitchClasses, degreeNames } = scaleData;
+      const groups = CHORD_ROW_SCALES.includes(state.scale)
+        ? [0, 1, 2, 3, 4, 5, 6].map(d => [d, (d + 2) % 7, (d + 4) % 7])
+        : [scaleObj.chordIdx.slice(0, 3)];
+      return groups.map(idx => {
+        const pcs = idx.map(i => scalePitchClasses[i]);
+        const q = chordQuality((pcs[1] - pcs[0] + 12) % 12, (pcs[2] - pcs[0] + 12) % 12);
+        let roman = ROMAN[idx[0]];
+        if (q.kind === 'minor' || q.kind === 'dim') roman = roman.toLowerCase();
+        if (q.kind === 'dim') roman += '°';
+        if (q.kind === 'aug') roman += '+';
+        return {
+          degree: idx[0],
+          pcs,
+          name: degreeNames[idx[0]] + q.suffix,
+          roman,
+          noteNames: idx.map(i => degreeNames[i])
+        };
+      });
+    }
+
+    function getSelectedChord() {
+      return state.chordDegree === null ? null : cachedChords[state.chordDegree] || null;
+    }
+
+    // Picks one chord tone per string inside the current shape, root in the bass, within a hand span
+    function chordVoicing(chord) {
+      const pool = cachedScaleData.activeShapeNotes.filter(n => chord.pcs.includes(n.pitchClass));
+      const roots = pool.filter(n => n.pitchClass === chord.pcs[0]).sort((a, b) => a.midi - b.midi);
+      const bass = roots.find(n => n.stringNumber >= 4) || roots[0];
+      const midis = [];
+      const covered = new Set();
+      if (bass) {
+        midis.push(bass.midi);
+        covered.add(bass.pitchClass);
+        for (let str = bass.stringNumber - 1; str >= 1; str--) {
+          const options = pool.filter(n => n.stringNumber === str && (n.fret === 0 || Math.abs(n.fret - bass.fret) <= 3));
+          if (!options.length) continue;
+          // Prefer a chord tone the voicing doesn't have yet, then the nearest fret
+          const near = n => Math.abs(n.fret - bass.fret);
+          options.sort((a, b) => (covered.has(a.pitchClass) - covered.has(b.pitchClass)) || (near(a) - near(b)));
+          midis.push(options[0].midi);
+          covered.add(options[0].pitchClass);
+        }
+      }
+      if (midis.length >= 3 && covered.size === chord.pcs.length) return midis.sort((a, b) => a - b);
+      // Fallback: a plain close-position chord around the low-mid register
+      const rootMidi = 43 + ((chord.pcs[0] - 7 + 12) % 12);
+      const third = (chord.pcs[1] - chord.pcs[0] + 12) % 12;
+      const fifth = (chord.pcs[2] - chord.pcs[0] + 12) % 12;
+      return [rootMidi, rootMidi + fifth, rootMidi + 12, rootMidi + 12 + third];
+    }
+
+    // Strum low to high. Chords ring freely: they are not tied to strings, so the scale notes don't cut them off.
+    function strumChord(chord, when, level) {
+      const ctx = ensureAudioContext();
+      if (!ctx || !chord) return [];
+      const startAt = Math.max(when || 0, ctx.currentTime);
+      return chordVoicing(chord).map((midi, i) =>
+        playGuitarNote(midi, 1.6, false, startAt + i * 0.024, null, level));
+    }
+
+    function renderChordPanel() {
+      const container = document.getElementById('chordButtons');
+      container.innerHTML = cachedChords.map((c, i) =>
+        `<button type="button" data-chord-idx="${i}" aria-label="${c.name} chord, ${c.noteNames.join(' ')}">
+           <span class="text-base font-extrabold leading-none">${c.name}</span>
+           <span class="text-[10px] font-mono opacity-70 mt-1">${c.roman}</span>
+         </button>`).join('');
+      paintButtonGroup('chordButtons', 'data-chord-idx', state.chordDegree === null ? '' : state.chordDegree, BTN_STYLES.chord);
+      const chord = getSelectedChord();
+      const single = cachedChords.length === 1;
+      document.getElementById('chordHint').textContent = chord
+        ? `${chord.name}: ${chord.noteNames.join(' - ')}`
+        : single ? 'Root chord of this scale' : 'Tap a chord to see and hear it';
+      document.getElementById('chkBacking').checked = state.backing;
+      const backingChord = chord || cachedChords[0];
+      document.getElementById('backingLabel').textContent = backingChord
+        ? `Strum ${backingChord.name} once per bar while the pattern plays`
+        : 'Strum the chord once per bar while the pattern plays';
+    }
+
+    /********************************************************************
      * UI RENDERING
      ********************************************************************/
     const BTN_STYLES = {
@@ -738,6 +843,11 @@
         base: 'shrink-0 h-10 px-4 rounded-full text-sm font-semibold transition ',
         on: 'bg-amber-500 text-slate-950',
         off: 'bg-slate-900 text-slate-300 active:bg-slate-800'
+      },
+      chord: {
+        base: 'h-14 rounded-xl flex flex-col items-center justify-center transition ',
+        on: 'bg-white text-slate-950',
+        off: 'bg-slate-800 text-slate-100 active:bg-slate-700'
       },
       tuner: {
         base: 'h-14 rounded-xl flex flex-col items-center justify-center transition ',
@@ -835,6 +945,8 @@
     function markerHtmlFor(note, isActive, activeSizeClasses) {
       if (!note) return '';
       if (isActive) {
+        const chord = getSelectedChord();
+        const chordClass = !chord ? '' : chord.pcs.includes(note.pitchClass) ? 'in-chord' : 'chord-dim';
         let colorClasses = 'bg-emerald-600 text-white border-emerald-300';
         if (note.isRoot) {
           colorClasses = 'bg-rose-600 text-white border-rose-200 font-extrabold ring-2 ring-rose-400/40';
@@ -843,7 +955,7 @@
         }
         return `
           <button type="button" data-note-cell="${note.id}" aria-label="${markerAriaLabel(note)}"
-            class="note-marker relative z-20 ${activeSizeClasses} rounded-full border text-xs font-mono flex items-center justify-center shadow-md transition transform hover:scale-110 active:scale-95 ${colorClasses}">
+            class="note-marker ${chordClass} relative z-20 ${activeSizeClasses} rounded-full border text-xs font-mono flex items-center justify-center shadow-md transition transform hover:scale-110 active:scale-95 ${colorClasses}">
             ${getMarkerText(note)}
           </button>`;
       }
@@ -1120,7 +1232,10 @@
     function updateAllUI() {
       cachedScaleData = getScaleData();
       state.sequence = buildPracticeSequence(cachedScaleData.sortedUniquePitch);
+      cachedChords = buildChords(cachedScaleData);
+      if (state.chordDegree !== null && state.chordDegree >= cachedChords.length) state.chordDegree = null;
       paintControls();
+      renderChordPanel();
 
       const { scaleObj, degreeNames, pcName, windowRange } = cachedScaleData;
       const parentPc = getParentMajorRoot(state.keyRoot, state.scale);
@@ -1291,6 +1406,11 @@
 
         const src = playGuitarNote(noteObj.midi, Math.max(0.9, stepSec * 2.5), noteObj.isRoot, when, noteObj.stringNumber);
         if (src) pendingSources.push({ src, when });
+        if (state.backing && beatStepCounter % (state.subdivision * 4) === 0) {
+          strumChord(getSelectedChord() || cachedChords[0], when, 0.5).forEach(s => {
+            if (s) pendingSources.push({ src: s, when });
+          });
+        }
         if (state.metronome && beatStepCounter % state.subdivision === 0) {
           playMetronomeClick((beatStepCounter / state.subdivision) % 4 === 0, when);
         }
@@ -1300,7 +1420,7 @@
         }, delayMs));
 
         // Keep the bookkeeping lists short
-        if (pendingSources.length > 16) pendingSources.splice(0, pendingSources.length - 16);
+        if (pendingSources.length > 40) pendingSources.splice(0, pendingSources.length - 40);
         if (pendingVisualTimers.length > 32) pendingVisualTimers.splice(0, pendingVisualTimers.length - 32);
 
         beatStepCounter++;
@@ -1558,6 +1678,18 @@
           releaseHold();
           toggleTunerString(stringNumber);
         }
+        saveSettings();
+      });
+      onButtonClick('chordButtons', 'data-chord-idx', (val) => {
+        const idx = parseInt(val, 10);
+        state.chordDegree = state.chordDegree === idx ? null : idx;
+        if (state.chordDegree !== null && !state.isPlaying) strumChord(getSelectedChord(), 0, 0.6);
+        renderChordPanel();
+        renderFretboardsOnly();
+      });
+      document.getElementById('chkBacking').addEventListener('change', (e) => {
+        state.backing = e.target.checked;
+        beatStepCounter = 0;
         saveSettings();
       });
       onButtonClick('tabBar', 'data-tab', (val) => {

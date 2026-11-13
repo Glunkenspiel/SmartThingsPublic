@@ -21,6 +21,8 @@
     .safe-top { padding-top: max(8px, env(safe-area-inset-top, 0px)); }
     .no-scrollbar { scrollbar-width: none; }
     .no-scrollbar::-webkit-scrollbar { display: none; }
+    .note-marker.in-chord { box-shadow: 0 0 0 3px #fff; }
+    .note-marker.chord-dim { opacity: 0.3; }
     .note-marker.is-held { animation: none !important; box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.35), 0 0 18px 4px rgba(56, 189, 248, 0.8); }
     body {
       overscroll-behavior-y: contain;
@@ -199,6 +201,7 @@
     <!-- Settings tabs (phones / tablets) -->
     <nav id="tabBar" role="tablist" aria-label="Settings" class="lg:hidden flex gap-2 overflow-x-auto no-scrollbar -mx-3 px-3 sm:mx-0 sm:px-0">
       <button type="button" role="tab" data-tab="key">Key</button>
+      <button type="button" role="tab" data-tab="chords">Chords</button>
       <button type="button" role="tab" data-tab="shape">Shape</button>
       <button type="button" role="tab" data-tab="pattern">Pattern</button>
       <button type="button" role="tab" data-tab="tempo">Tempo</button>
@@ -247,6 +250,18 @@
             <option value="diminished">Diminished (whole-half) — tense, symmetrical</option>
           </optgroup>
         </select>
+      </div>
+
+      <div data-panel="chords" class="lg:col-span-3 bg-slate-900 rounded-2xl p-4 space-y-3">
+        <div class="flex items-center justify-between gap-2">
+          <span id="lblChords" class="text-xs font-bold uppercase tracking-wider text-slate-400">Chords in this key</span>
+          <span id="chordHint" class="text-xs font-mono text-amber-400 truncate">Tap a chord to see and hear it</span>
+        </div>
+        <div id="chordButtons" role="group" aria-labelledby="lblChords" class="grid grid-cols-4 sm:grid-cols-7 gap-2"></div>
+        <label class="flex items-center justify-between gap-3 min-h-[44px]">
+          <span id="backingLabel" class="text-sm text-slate-300">Strum the chord once per bar while the pattern plays</span>
+          <input id="chkBacking" type="checkbox" class="w-5 h-5 shrink-0 accent-amber-500" />
+        </label>
       </div>
 
       <div data-panel="shape" class="bg-slate-900 rounded-2xl p-4 space-y-3">

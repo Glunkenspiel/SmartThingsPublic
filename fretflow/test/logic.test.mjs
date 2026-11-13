@@ -225,14 +225,62 @@ await page.selectOption('#selectPositionVariant', '3NPS_4');
 await page.selectOption('#selectMode', 'min_pent');
 check(await page.evaluate(() => state.shape === 'E' && document.getElementById('optgroup3nps').disabled), '3NPS fallback for pentatonic');
 
+// Chords of the key
+await page.selectOption('#selectMode', 'ionian');
+await page.evaluate(() => { state.keyRoot = 0; state.shape = 'E'; state.labelMode = 'note'; applyConfigChange(); });
+const chordRow = await page.evaluate(() => cachedChords.map(c => `${c.name}/${c.roman}`).join(' '));
+check(chordRow === 'C/I Dm/ii Em/iii F/IV G/V Am/vi Bdim/vii°', 'C major chords: ' + chordRow);
+await page.click('[data-chord-idx="1"]');
+const dm = await page.evaluate(() => ({
+  hint: document.getElementById('chordHint').textContent,
+  lit: [...new Set([...document.querySelectorAll('#horizontalFretboard .in-chord')].map(e => e.textContent.trim()))].sort().join(''),
+  dim: document.querySelectorAll('#horizontalFretboard .chord-dim').length,
+  voicing: chordVoicing(getSelectedChord()).map(m => m % 12),
+  bass: chordVoicing(getSelectedChord())[0] % 12
+}));
+check(dm.hint === 'Dm: D - F - A' && dm.lit === 'ADF' && dm.dim > 0, 'Dm highlight ' + JSON.stringify(dm));
+check(dm.bass === 2 && dm.voicing.length >= 3 && dm.voicing.every(pc => [2, 5, 9].includes(pc)), 'Dm voicing ' + JSON.stringify(dm));
+if (shotDir) await page.screenshot({ path: join(shotDir, 'desktop-chords.png'), fullPage: true });
+const chordSweep = await page.evaluate(() => {
+  const bad = [];
+  for (let key = 0; key < 12; key++) for (const scale of Object.keys(SCALES)) for (const shape of ['C', 'A', 'G', 'E', 'D', 'FULL']) {
+    state.keyRoot = key; state.scale = scale; state.shape = shape; state.chordDegree = null;
+    cachedScaleData = getScaleData(); cachedChords = buildChords(cachedScaleData);
+    if (cachedChords.length !== (CHORD_ROW_SCALES.includes(scale) ? 7 : 1)) bad.push(`${key} ${scale}: row length`);
+    for (const c of cachedChords) {
+      const v = chordVoicing(c);
+      if (v.length < 3 || v.length > 6 || v[0] % 12 !== c.pcs[0] || v.some(m => !c.pcs.includes(m % 12)) || new Set(v.map(m => m % 12)).size < 3 || v[0] < 40 || v[v.length - 1] > 81) bad.push(`${key} ${scale} ${shape} ${c.name}: ${v}`);
+      if (/undefined|\?/.test(c.name)) bad.push(`${key} ${scale}: name ${c.name}`);
+    }
+  }
+  state.keyRoot = 0; state.scale = 'ionian'; state.shape = 'E'; applyConfigChange();
+  return bad;
+});
+check(chordSweep.length === 0, `${chordSweep.length} chord problems, e.g. ${chordSweep.slice(0, 6).join(' | ')}`);
+check(await page.evaluate(() => cachedChords.length === 7 && state.chordDegree === null), 'chord row reset');
+await page.selectOption('#selectMode', 'hirajoshi');
+check(await page.evaluate(() => cachedChords.length === 1 && cachedChords[0].name === 'Cm'), 'root-only chord for exotic scales');
+await page.selectOption('#selectMode', 'ionian');
+// Backing chord: one strum per bar, counted in sources scheduled
+const backing = await page.evaluate(async () => {
+  let strums = 0; const orig = strumChord;
+  strumChord = (...a) => { strums++; return orig(...a); };
+  state.backing = true; setTempoValue(240); state.subdivision = 2;
+  startPlayback();
+  await new Promise(r => setTimeout(r, 2050)); // 240 BPM: a bar lasts 1 s
+  pausePlayback(); strumChord = orig; state.backing = false; setTempoValue(100);
+  return strums;
+});
+check(backing === 3, 'backing strums per bar: ' + backing);
+
 // Hold mode and tuning reference
 await page.selectOption('#selectMode', 'ionian');
 await page.click('#btnHoldToggle');
-await page.click('#horizontalFretboard [data-note-cell="s6-f11"]');
-check(await page.evaluate(() => state.heldId === 's6-f11' && !!drone && document.querySelectorAll('#horizontalFretboard .is-held').length === 1), 'hold a fretboard note');
+await page.click('#horizontalFretboard [data-note-cell="s6-f8"]');
+check(await page.evaluate(() => state.heldId === 's6-f8' && !!drone && document.querySelectorAll('#horizontalFretboard .is-held').length === 1), 'hold a fretboard note');
 check((await page.textContent('#liveStringFretText')).startsWith('Holding'), 'hold banner');
 await page.keyboard.press('ArrowRight');
-check(await page.evaluate(() => !!drone && state.heldId === state.activeNoteObj.id && state.heldId !== 's6-f11'), 'stepping moves the held note');
+check(await page.evaluate(() => !!drone && state.heldId === state.activeNoteObj.id && state.heldId !== 's6-f8'), 'stepping moves the held note');
 await page.click(`#horizontalFretboard [data-note-cell="${await page.evaluate(() => state.heldId)}"]`);
 check(await page.evaluate(() => !drone && state.heldId === null), 'tapping the held note releases it');
 await page.click('[data-tuner-string="5"]');
@@ -283,6 +331,7 @@ const audio = await page.evaluate(async () => {
       const n = seq[i % seq.length];
       playGuitarNote(n.midi, Math.max(0.9, step * 2.5), n.isRoot, t, n.stringNumber);
       if (i % 4 === 0) playMetronomeClick(i % 16 === 0, t);
+      if (i % 16 === 0) strumChord(buildChords(getScaleData())[4], t, 0.5);
     }
     out[tone + '_fast'] = stats(await off.startRendering(), 0.5, 5);
     // A single quiet-ish case: one high note and one low note
@@ -349,7 +398,9 @@ if (shotDir) {
   await phone.tap('[data-orient="auto"]');
   await phone.tap('[data-tab="tuner"]');
   await phone.screenshot({ path: join(shotDir, 'phone-tuner.png') });
-  await phone.tap('[data-tab="key"]');
+  await phone.tap('[data-tab="chords"]');
+  await phone.tap('[data-chord-idx="4"]');
+  await phone.screenshot({ path: join(shotDir, 'phone-chords.png') });
   await phone.tap('#btnPlayToggle');
   await phone.waitForTimeout(700);
   await phone.screenshot({ path: join(shotDir, 'phone-vertical.png') });
