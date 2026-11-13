@@ -162,6 +162,24 @@ check(playing.idx >= 9 && playing.idx <= 10, 'step timing drifted: ' + JSON.stri
 check(playing.lit === 1 && playing.current === 1, 'highlight count ' + JSON.stringify(playing));
 if (shotDir) await page.screenshot({ path: join(shotDir, 'desktop-playing.png'), fullPage: true });
 
+// Looping plays the root once at the seam: after the last step the next one is index 1, not 0
+const seam = await page.evaluate(async () => {
+  pausePlayback();
+  const saved = { pattern: state.pattern, tempo: state.tempo, sub: state.subdivision };
+  state.pattern = 'arpeggio_triad'; applyConfigChange(); setTempoValue(240); state.subdivision = 4;
+  const seen = []; const orig = showStep;
+  showStep = (i, n) => { seen.push(i); orig(i, n); };
+  startPlayback();
+  await new Promise(r => setTimeout(r, (state.sequence.length + 4) * 62.5 + 300));
+  pausePlayback(); showStep = orig;
+  const len = state.sequence.length;
+  state.pattern = saved.pattern; state.subdivision = saved.sub; setTempoValue(saved.tempo); applyConfigChange();
+  return { seen, len };
+});
+const lastAt = seam.seen.indexOf(seam.len - 1);
+check(seam.seen[0] === 0 && lastAt > 0 && seam.seen[lastAt + 1] === 1, 'loop seam: ' + JSON.stringify(seam));
+await page.click('#btnPlayToggle');
+
 // Changing key mid-playback restarts cleanly; pause/stop work
 await page.click('[data-key-id="3"]');
 await page.waitForTimeout(500);

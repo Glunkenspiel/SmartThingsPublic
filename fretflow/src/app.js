@@ -1252,6 +1252,13 @@
       pendingSources = [];
     }
 
+    // Patterns end on the root they started from. When looping, that root is played once at the
+    // seam, not twice: the next pass starts from its second note.
+    function loopRestartIndex() {
+      const seq = state.sequence;
+      return seq.length > 2 && seq[0].id === seq[seq.length - 1].id ? 1 : 0;
+    }
+
     function schedulerTick() {
       if (!state.isPlaying || !audioCtx) return;
       // If the tab was in the background, don't try to catch up on missed notes
@@ -1271,7 +1278,7 @@
             schedulerTimer = null;
             return;
           }
-          nextStepToSchedule = 0;
+          nextStepToSchedule = loopRestartIndex();
           if (state.speedTrainer > 0 && state.tempo < 240) {
             setTempoValue(state.tempo + state.speedTrainer);
           }
@@ -1321,7 +1328,7 @@
           if (!state.isPlaying) return;
           if (silentIdx >= state.sequence.length) {
             if (!state.loop) { stopPlayback(); return; }
-            silentIdx = 0;
+            silentIdx = loopRestartIndex();
           }
           showStep(silentIdx, state.sequence[silentIdx]);
           silentIdx++;
