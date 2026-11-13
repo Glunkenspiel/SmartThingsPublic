@@ -1,0 +1,13 @@
+{
+  "name": "fretflow",
+  "private": true,
+  "version": "2.0.0",
+  "description": "Interactive guitar scale, mode and arpeggio trainer (web embed + Android WebView wrapper)",
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node build.mjs && node test/logic.test.mjs"
+  },
+  "devDependencies": {
+    "tailwindcss": "3.4.17"
+  }
+}
