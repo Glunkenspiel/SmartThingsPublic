@@ -1,0 +1,431 @@
+<title>Warrior Mace Passive Planner</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Marcellus&family=Inter:wght@400;500;600&display=swap">
+<style>
+/* Layout: one dark forge-lit workspace. Tree canvas is the page; a narrow ledger on the right reads like a levelling log. */
+:root {
+  color-scheme: dark;
+  --bg: #0e1114;          /* cold iron */
+  --panel: #161b20;
+  --panel-2: #1d242b;
+  --line: #2b343d;
+  --fg: #e6e2d8;          /* bone */
+  --muted: #8f9aa3;
+  --ember: #ff8a3c;       /* allocated */
+  --ember-hot: #ffe2b8;   /* gained this level */
+  --plan: #b9a06a;        /* still to come */
+  --steel: #46525e;       /* not in this build */
+  --display: "Marcellus", "Iowan Old Style", Georgia, serif;
+  --body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 14px; line-height: 1.5; }
+.wrap { max-width: 1400px; margin: 0 auto; padding-block: 20px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 16px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; }
+h1 { font-family: var(--display); font-weight: 400; font-size: 28px; margin: 0; letter-spacing: .01em; text-wrap: balance; }
+header p { margin: 0; color: var(--muted); }
+h2 { font-family: var(--display); font-weight: 400; font-size: 18px; margin: 0; }
+h3 { font-size: 11px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); margin: 0; }
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--ember-hot); outline-offset: 2px; }
+
+.builds { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.build { text-align: left; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.build:hover { border-color: var(--steel); }
+.build[aria-pressed="true"] { border-color: var(--ember); background: var(--panel-2); }
+.build .tag { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.build[aria-pressed="true"] .tag { color: var(--ember); }
+.build .nm { font-family: var(--display); font-size: 16px; }
+.build .as { color: var(--muted); font-size: 12px; }
+
+.main { display: grid; grid-template-columns: minmax(0, 1fr) 370px; gap: 16px; align-items: start; }
+.stage { display: flex; flex-direction: column; gap: 10px; min-width: 0; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 8px); }
+
+.level { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px 16px; align-items: center; }
+.lvnum { display: flex; align-items: center; gap: 6px; }
+.lvnum label { font-size: 11px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
+.lvnum input { width: 64px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; font: 400 22px var(--display); text-align: center; font-variant-numeric: tabular-nums; }
+.step { width: 32px; height: 32px; border-radius: 4px; border: 1px solid var(--line); background: var(--panel-2); font-size: 16px; line-height: 1; }
+.step:hover { border-color: var(--ember); }
+input[type=range] { width: 100%; accent-color: var(--ember); min-width: 0; }
+.pts { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pts b { font: 400 22px var(--display); color: var(--ember); }
+.quest { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+.quest b { color: var(--fg); font-weight: 500; font-variant-numeric: tabular-nums; }
+.quest .step { width: 24px; height: 24px; font-size: 13px; }
+.linkbtn { background: none; border: 0; padding: 0; color: var(--plan); text-decoration: underline; font-size: 12px; }
+
+.treebox { position: relative; background: radial-gradient(120% 90% at 85% 15%, #1a2026 0%, var(--bg) 70%); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; height: min(68vh, 700px); min-height: 380px; touch-action: none; }
+canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+canvas.drag { cursor: grabbing; }
+.zoom { position: absolute; right: 10px; top: 10px; display: flex; flex-direction: column; gap: 4px; }
+.zoom button { width: 34px; height: 34px; border-radius: 4px; border: 1px solid var(--line); background: var(--panel); font-size: 16px; }
+.zoom button.fit { font-size: 11px; }
+.legend { position: absolute; left: 10px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); background: color-mix(in srgb, var(--bg) 82%, transparent); padding: 6px 10px; border-radius: 4px; max-width: calc(100% - 20px); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+.tip { position: absolute; pointer-events: none; max-width: 280px; background: var(--panel-2); border: 1px solid var(--steel); border-radius: 4px; padding: 8px 10px; font-size: 12.5px; box-shadow: 0 6px 20px #0009; }
+.tip .tn { font-family: var(--display); font-size: 15px; }
+.tip .tw { color: var(--ember); font-size: 11.5px; letter-spacing: .04em; margin-bottom: 4px; }
+.tip .tw.off { color: var(--muted); }
+.tip ul { margin: 0; padding: 0; list-style: none; color: var(--fg); }
+
+.ledger { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.card p { margin: 0; color: var(--muted); }
+.plain { display: flex; flex-direction: column; gap: 8px; padding: 0 2px; }
+.plain p { margin: 0; color: var(--muted); }
+ul.list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.next li { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 8px; padding: 5px 0; border-top: 1px solid var(--line); }
+.next li:first-child { border-top: 0; }
+.next .n { color: var(--muted); font-variant-numeric: tabular-nums; }
+.next .s, .ms .s, .asc .s { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.ms { max-height: 360px; overflow-y: auto; margin-right: -6px; padding-right: 6px; }
+.ms button { width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--line); padding: 6px 0; display: grid; grid-template-columns: 46px minmax(0, 1fr); gap: 8px; }
+.ms li:first-child button { border-top: 0; }
+.ms .lv { font-variant-numeric: tabular-nums; color: var(--plan); }
+.ms .got .lv { color: var(--ember); }
+.ms .got .nm::after { content: " ✓"; color: var(--ember); }
+.ms button:hover .nm { text-decoration: underline; }
+.ms .kind { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; margin-left: 6px; }
+.asc li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; padding: 5px 0; border-top: 1px solid var(--line); }
+.asc li:first-child { border-top: 0; }
+.asc .n { color: var(--muted); font-variant-numeric: tabular-nums; }
+.asc .big { color: var(--ember-hot); }
+.totals li { display: flex; gap: 8px; padding: 3px 0; overflow-wrap: anywhere; }
+.skills li { padding: 2px 0; color: var(--fg); }
+.skills li::before { content: "– "; color: var(--muted); }
+details summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; }
+details summary::-webkit-details-marker { display: none; }
+details summary::after { content: "+"; color: var(--muted); font-size: 16px; }
+details[open] summary::after { content: "–"; }
+details[open] summary { margin-bottom: 8px; }
+footer { color: var(--muted); font-size: 12px; max-width: 75ch; }
+
+@media (max-width: 980px) {
+  .main { grid-template-columns: minmax(0, 1fr); }
+  .stage { position: static; }
+  .builds { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .treebox { height: 58vh; }
+}
+@media (max-width: 480px) {
+  h1 { font-size: 23px; }
+  .level { grid-template-columns: minmax(0, 1fr) auto; }
+  .level input[type=range] { grid-column: 1 / -1; grid-row: 2; }
+  .legend { font-size: 11px; gap: 2px 10px; }
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Warrior Mace Passive Planner</h1>
+    <p>Path of Exile 2 · tree version <span id="ver"></span> · pick a build, set your level, follow the lit path.</p>
+  </header>
+
+  <div class="builds" id="builds" role="group" aria-label="Build"></div>
+
+  <div class="main">
+    <div class="stage">
+      <div class="level">
+        <div class="lvnum">
+          <label for="lvInput">Level</label>
+          <button class="step" id="lvDown" aria-label="Level down">−</button>
+          <input id="lvInput" type="number" min="1" max="100" inputmode="numeric">
+          <button class="step" id="lvUp" aria-label="Level up">+</button>
+        </div>
+        <input id="lvRange" type="range" min="1" max="100" step="1" aria-label="Character level">
+        <div class="pts"><b id="ptsUsed">0</b> / <span id="ptsTotal"></span> points</div>
+        <div class="quest">
+          <span>Includes <b id="qVal">0</b> of 24 quest points (<span id="qMode">estimated from level</span>)</span>
+          <button class="step" id="qDown" aria-label="Fewer quest points">−</button>
+          <button class="step" id="qUp" aria-label="More quest points">+</button>
+          <button class="linkbtn" id="qAuto" hidden>Use estimate</button>
+        </div>
+      </div>
+
+      <div class="treebox" id="treebox">
+        <canvas id="cv" aria-label="Passive skill tree. Drag to pan, scroll or pinch to zoom."></canvas>
+        <div class="zoom">
+          <button id="zIn" aria-label="Zoom in">+</button>
+          <button id="zOut" aria-label="Zoom out">−</button>
+          <button id="zFit" class="fit" aria-label="Fit build to view">Fit</button>
+        </div>
+        <div class="legend">
+          <span><i style="background:var(--ember-hot)"></i>Gained this level</span>
+          <span><i style="background:var(--ember)"></i>Allocated</span>
+          <span><i style="background:transparent;border:2px solid var(--plan)"></i>Still to come</span>
+          <span><i style="background:var(--steel)"></i>Not in this build</span>
+        </div>
+        <div class="tip" id="tip" hidden></div>
+      </div>
+    </div>
+
+    <aside class="ledger">
+      <div class="plain">
+        <h2 id="bName"></h2>
+        <p id="bBlurb"></p>
+      </div>
+
+      <div class="card">
+        <h3 id="nextHead">Next points</h3>
+        <ul class="list next" id="next"></ul>
+      </div>
+
+      <div class="card">
+        <h3>Notables in order — select one to jump to its level</h3>
+        <ul class="list ms" id="ms"></ul>
+      </div>
+
+      <div class="card">
+        <h3 id="ascHead">Ascendancy</h3>
+        <ul class="list asc" id="asc"></ul>
+        <p id="ascNote"></p>
+      </div>
+
+      <div class="card">
+        <details id="totalsBox" open>
+          <summary><h3>Tree totals at this level</h3></summary>
+          <ul class="list totals" id="totals"></ul>
+        </details>
+      </div>
+
+      <div class="card">
+        <h3>Skills this tree supports</h3>
+        <ul class="list skills" id="skills"></ul>
+      </div>
+    </aside>
+  </div>
+
+  <footer>
+    Node positions, names and stats come from the Path of Building Community tree export for PoE2. Paths are computed by scoring every node for the build's damage type and repeatedly taking the best value per point from the Warrior start, so the order doubles as a levelling route. Scores are heuristics, not a DPS simulation; check a path against your own gear and gems before spending respec gold. Quest point timing is an estimate; adjust it to match your character.
+  </footer>
+</div>
+
+<script src="data.js"></script>
+<script>
+(function () {
+  const T = window.TREE, N = T.nodes, $ = id => document.getElementById(id);
+  const css = getComputedStyle(document.documentElement);
+  const col = n => css.getPropertyValue(n).trim();
+  const C = { ember: col('--ember'), hot: col('--ember-hot'), plan: col('--plan'), steel: col('--steel'), bg: col('--bg'), fg: col('--fg'), muted: col('--muted'), line: col('--line') };
+  const R = { s: 26, A: 26, N: 46, K: 64, J: 46, S: 70 };
+  const KIND = { K: 'Keystone', J: 'Jewel', N: '' };
+
+  let st = { build: T.builds[0].id, level: 30, quest: null };
+  try { const s = JSON.parse(localStorage.getItem('mace-planner') || 'null'); if (s && T.builds.some(b => b.id === s.build)) st = Object.assign(st, s); } catch (e) {}
+  const save = () => { try { localStorage.setItem('mace-planner', JSON.stringify(st)); } catch (e) {} };
+
+  const build = () => T.builds.find(b => b.id === st.build);
+  const questEst = L => Math.max(0, Math.min(24, Math.round((L - 5) / 60 * 24)));
+  const quest = L => st.quest == null ? questEst(L) : st.quest;
+  const pts = L => Math.max(0, Math.min(T.total, build().order.length, (L - 1) + quest(L)));
+  // level at which the i-th point (1-based) becomes available, using the estimate
+  const levelFor = i => { for (let L = 1; L <= 100; L++) if (Math.min(T.total, (L - 1) + questEst(L)) >= i) return L; return 100; };
+
+  // ---------- canvas ----------
+  const cv = $('cv'), box = $('treebox'), ctx = cv.getContext('2d');
+  let view = { x: 0, y: 0, k: 0.05 }, W = 0, H = 0, dpr = 1;
+  let idx = new Map(), have = 0, prevHave = 0;
+
+  function fit() {
+    const o = build().order; let x0 = N[T.start][0], x1 = x0, y0 = N[T.start][1], y1 = y0;
+    for (const id of o) { const n = N[id]; x0 = Math.min(x0, n[0]); x1 = Math.max(x1, n[0]); y0 = Math.min(y0, n[1]); y1 = Math.max(y1, n[1]); }
+    const pad = 500; x0 -= pad; x1 += pad; y0 -= pad; y1 += pad;
+    view.k = Math.min(W / (x1 - x0), H / (y1 - y0));
+    view.x = W / 2 - (x0 + x1) / 2 * view.k; view.y = H / 2 - (y0 + y1) / 2 * view.k;
+  }
+  function resize() {
+    const r = box.getBoundingClientRect(); const first = !W;
+    dpr = Math.min(2, window.devicePixelRatio || 1); W = r.width; H = r.height;
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    if (first) fit(); draw();
+  }
+  const state = id => { const i = idx.get(+id); if (id == T.start) return 2; if (i === undefined) return 0; if (i >= have) return 1; return i >= prevHave ? 3 : 2; };
+
+  function draw() {
+    if (!W) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
+    ctx.translate(view.x, view.y); ctx.scale(view.k, view.k);
+    const px = 1 / view.k;
+    // edges: three passes so lit paths sit on top
+    for (let pass = 0; pass < 3; pass++) {
+      ctx.beginPath();
+      for (const e of T.edges) {
+        const sa = state(e[0]), sb = state(e[1]);
+        const p = (sa >= 2 && sb >= 2) ? 2 : (sa >= 1 && sb >= 1) ? 1 : 0;
+        if (p !== pass) continue;
+        const a = N[e[0]], b = N[e[1]];
+        if (e.length > 2) {
+          const a1 = Math.atan2(a[1] - e[3], a[0] - e[2]), a2 = Math.atan2(b[1] - e[3], b[0] - e[2]);
+          let d = a2 - a1; while (d > Math.PI) d -= 2 * Math.PI; while (d <= -Math.PI) d += 2 * Math.PI;
+          ctx.moveTo(a[0], a[1]); ctx.arc(e[2], e[3], e[4], a1, a2, d < 0);
+        } else { ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); }
+      }
+      ctx.strokeStyle = [C.line, C.plan, C.ember][pass];
+      ctx.lineWidth = Math.max([1, 1.5, 2.5][pass] * px, [5, 8, 14][pass]);
+      ctx.setLineDash(pass === 1 ? [6 * px, 5 * px] : []);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    // nodes
+    for (const id in N) {
+      const n = N[id], s = state(id);
+      const r = Math.max(R[n[2]], (s ? 3.2 : 1.6) * px);
+      ctx.beginPath();
+      if (n[2] === 'K') { ctx.moveTo(n[0], n[1] - r); ctx.lineTo(n[0] + r, n[1]); ctx.lineTo(n[0], n[1] + r); ctx.lineTo(n[0] - r, n[1]); ctx.closePath(); }
+      else if (n[2] === 'J') ctx.rect(n[0] - r * .8, n[1] - r * .8, r * 1.6, r * 1.6);
+      else ctx.arc(n[0], n[1], r, 0, 6.2832);
+      if (s === 3) { ctx.fillStyle = C.hot; ctx.fill(); ctx.strokeStyle = C.ember; ctx.lineWidth = Math.max(2 * px, 10); ctx.stroke(); }
+      else if (s === 2) { ctx.fillStyle = C.ember; ctx.fill(); }
+      else if (s === 1) { ctx.fillStyle = C.bg; ctx.fill(); ctx.strokeStyle = C.plan; ctx.lineWidth = Math.max(1.5 * px, 8); ctx.stroke(); }
+      else { ctx.fillStyle = C.steel; ctx.globalAlpha = n[2] === 's' || n[2] === 'A' ? .55 : .9; ctx.fill(); ctx.globalAlpha = 1; }
+    }
+    // labels for this build's notables
+    const fs = Math.max(11 * px, 0);
+    if (view.k > 0.045) {
+      ctx.font = `500 ${fs}px Inter, system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.lineWidth = 3 * px; ctx.strokeStyle = C.bg; ctx.lineJoin = 'round';
+      for (const id in N) {
+        const n = N[id], s = state(id);
+        if (n[2] === 's' || n[2] === 'A' || n[2] === 'J') continue;
+        if (!s && view.k < 0.16) continue;
+        const y = n[1] + R[n[2]] + 5 * px;
+        ctx.strokeText(n[3], n[0], y);
+        ctx.fillStyle = s === 0 ? C.muted : s === 1 ? C.plan : C.fg; ctx.fillText(n[3], n[0], y);
+      }
+    }
+  }
+
+  // ---------- pan / zoom / hover ----------
+  const ptrs = new Map(); let moved = 0, pinch = 0;
+  const loc = e => { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+  function zoomAt(x, y, f) {
+    const k = Math.max(0.02, Math.min(0.9, view.k * f)); f = k / view.k;
+    view.x = x - (x - view.x) * f; view.y = y - (y - view.y) * f; view.k = k; draw();
+  }
+  cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, loc(e)); moved = 0; cv.classList.add('drag'); pinch = 0; });
+  cv.addEventListener('pointermove', e => {
+    const p = loc(e);
+    if (!ptrs.has(e.pointerId)) { hover(p); return; }
+    const q = ptrs.get(e.pointerId); ptrs.set(e.pointerId, p);
+    if (ptrs.size === 1) { view.x += p[0] - q[0]; view.y += p[1] - q[1]; moved += Math.abs(p[0] - q[0]) + Math.abs(p[1] - q[1]); if (moved > 4) $('tip').hidden = true; draw(); }
+    else if (ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      if (pinch) zoomAt((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, d / pinch);
+      pinch = d; moved = 99;
+    }
+  });
+  const up = e => { if (ptrs.has(e.pointerId) && moved <= 4) hover(loc(e), true); ptrs.delete(e.pointerId); pinch = 0; if (!ptrs.size) cv.classList.remove('drag'); };
+  cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+  cv.addEventListener('pointerleave', () => { if (!ptrs.size) $('tip').hidden = true; });
+  cv.addEventListener('wheel', e => { e.preventDefault(); const p = loc(e); zoomAt(p[0], p[1], Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
+  $('zIn').onclick = () => zoomAt(W / 2, H / 2, 1.4);
+  $('zOut').onclick = () => zoomAt(W / 2, H / 2, 1 / 1.4);
+  $('zFit').onclick = () => { fit(); draw(); };
+
+  function hover(p, tap) {
+    const wx = (p[0] - view.x) / view.k, wy = (p[1] - view.y) / view.k, tip = $('tip');
+    let best = null, bd = Math.max(90, (tap ? 22 : 12) / view.k);
+    for (const id in N) { const n = N[id], d = Math.hypot(n[0] - wx, n[1] - wy); if (d < bd) { bd = d; best = id; } }
+    if (!best) { tip.hidden = true; return; }
+    const n = N[best], i = idx.get(+best);
+    let when = 'Not part of this build', off = true;
+    if (best == T.start) { when = 'Starting point'; off = false; }
+    else if (i !== undefined) { off = false; when = i < have ? `Allocated · point ${i + 1}` : `Point ${i + 1} · around level ${levelFor(i + 1)}`; }
+    tip.innerHTML = `<div class="tn"></div><div class="tw${off ? ' off' : ''}"></div><ul></ul>`;
+    tip.children[0].textContent = n[3]; tip.children[1].textContent = when;
+    for (const s of n[4]) { const li = document.createElement('li'); li.textContent = s; tip.children[2].appendChild(li); }
+    tip.hidden = false;
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    tip.style.left = Math.max(6, Math.min(W - tw - 6, p[0] + 14)) + 'px';
+    tip.style.top = Math.max(6, Math.min(H - th - 6, p[1] + 14)) + 'px';
+  }
+
+  // ---------- side panels ----------
+  const el = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; };
+
+  function renderBuilds() {
+    const g = $('builds'); g.textContent = '';
+    for (const b of T.builds) {
+      const bt = el('button', 'build'); bt.id = 'build-' + b.id; bt.setAttribute('aria-pressed', b.id === st.build);
+      bt.append(el('span', 'tag', b.tag), el('span', 'nm', b.name), el('span', 'as', b.asc));
+      bt.onclick = () => { st.build = b.id; save(); renderBuilds(); renderBuild(); update(); fit(); draw(); };
+      g.appendChild(bt);
+    }
+  }
+
+  function renderBuild() {
+    const b = build();
+    idx = new Map(b.order.map((id, i) => [id, i]));
+    $('bName').textContent = b.name + ' · ' + b.asc; $('bBlurb').textContent = b.blurb;
+    const ms = $('ms'); ms.textContent = '';
+    b.order.forEach((id, i) => {
+      const n = N[id]; if (!'NKJ'.includes(n[2])) return;
+      const L = levelFor(i + 1), li = el('li'), bt = el('button'); li.dataset.i = i;
+      const right = el('span'), nm = el('span', 'nm', n[3]);
+      right.appendChild(nm); if (KIND[n[2]]) nm.appendChild(el('span', 'kind', KIND[n[2]]));
+      right.appendChild(el('div', 's', n[4][0] || 'Socket a jewel with physical or melee damage'));
+      bt.append(el('span', 'lv', 'Lv ' + L), right);
+      bt.onclick = () => setLevel(L, true);
+      li.appendChild(bt); ms.appendChild(li);
+    });
+    const asc = $('asc'); asc.textContent = ''; $('ascHead').textContent = 'Ascendancy · ' + b.asc;
+    b.asc_nodes.forEach((a, i) => {
+      const li = el('li'), r = el('span');
+      r.append(el('span', a.notable ? 'big' : '', a.name), el('div', 's', a.stats.join(' · ')));
+      li.append(el('span', 'n', String(i + 1)), r); asc.appendChild(li);
+    });
+    $('ascNote').textContent = b.ascNote + ' You earn two ascendancy points from each of the four Trials.';
+    const sk = $('skills'); sk.textContent = ''; b.skills.forEach(s => sk.appendChild(el('li', '', s)));
+  }
+
+  function update() {
+    const b = build(), L = st.level;
+    have = pts(L); prevHave = L > 1 ? Math.min(have, Math.max(0, Math.min(T.total, (L - 2) + quest(L - 1)))) : 0;
+    $('lvInput').value = L; $('lvRange').value = L;
+    $('ptsUsed').textContent = have; $('ptsTotal').textContent = b.order.length;
+    $('qVal').textContent = quest(L); $('qMode').textContent = st.quest == null ? 'estimated from level' : 'set by you';
+    $('qAuto').hidden = st.quest == null;
+    // next points
+    const nx = $('next'); nx.textContent = '';
+    const upc = b.order.slice(have, have + 6);
+    $('nextHead').textContent = upc.length ? 'Next points' : 'Tree complete';
+    if (!upc.length) nx.appendChild(el('li', '', '')).append(el('span', 'n', ''), el('span', 's', 'All ' + b.order.length + ' points are allocated.'));
+    upc.forEach((id, j) => {
+      const n = N[id], li = el('li'), r = el('span');
+      r.append(el('span', '', n[3]), el('div', 's', n[4].join(' · ')));
+      li.append(el('span', 'n', '#' + (have + j + 1)), r); nx.appendChild(li);
+    });
+    for (const li of $('ms').children) li.classList.toggle('got', +li.dataset.i < have);
+    // totals
+    const sum = new Map();
+    for (const id of b.order.slice(0, have)) for (const s of N[id][4]) {
+      const m = s.match(/\d+(\.\d+)?/); if (!m) continue;
+      const key = s.replace(m[0], '#'); sum.set(key, (sum.get(key) || 0) + parseFloat(m[0]));
+    }
+    const tl = $('totals'); tl.textContent = '';
+    const rows = [...sum].sort((a, b2) => b2[1] - a[1]).slice(0, 16);
+    if (!rows.length) tl.appendChild(el('li', '', 'No points spent yet.'));
+    for (const [k, v] of rows) tl.appendChild(el('li', '', k.replace('#', String(Math.round(v * 10) / 10))));
+    draw();
+  }
+
+  function setLevel(L, reveal) {
+    st.level = Math.max(1, Math.min(100, Math.round(+L) || 1)); save(); update();
+  }
+  $('lvRange').addEventListener('input', e => setLevel(e.target.value));
+  $('lvInput').addEventListener('change', e => setLevel(e.target.value));
+  $('lvDown').onclick = () => setLevel(st.level - 1);
+  $('lvUp').onclick = () => setLevel(st.level + 1);
+  const setQ = d => { st.quest = Math.max(0, Math.min(24, quest(st.level) + d)); save(); update(); };
+  $('qDown').onclick = () => setQ(-1); $('qUp').onclick = () => setQ(1);
+  $('qAuto').onclick = () => { st.quest = null; save(); update(); };
+
+  $('ver').textContent = T.version;
+  renderBuilds(); renderBuild();
+  new ResizeObserver(resize).observe(box);
+  resize(); update();
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(draw);
+})();
+</script>
